@@ -75,3 +75,338 @@
   .nav-sep{font-size:7px}
   .message-row{max-width:86%}
 }
+
+
+.typing-indicator{
+  min-height:30px;
+  padding:5px 16px 8px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  opacity:.72;
+  font-size:12px;
+}
+
+.typing-dots{
+  display:inline-flex;
+  gap:3px;
+  align-items:center;
+}
+
+.typing-dots i{
+  display:block;
+  width:5px;
+  height:5px;
+  border-radius:50%;
+  background:currentColor;
+  animation:gafTyping 1s infinite ease-in-out;
+}
+
+.typing-dots i:nth-child(2){animation-delay:.15s}
+.typing-dots i:nth-child(3){animation-delay:.30s}
+
+@keyframes gafTyping{
+  0%,60%,100%{transform:translateY(0);opacity:.4}
+  30%{transform:translateY(-4px);opacity:1}
+}
+
+
+/* ===== Links / GIFs ===== */
+
+.bubble a{
+  color:inherit;
+  text-decoration:underline;
+  text-underline-offset:2px;
+  overflow-wrap:anywhere;
+}
+
+.load-gif{
+  margin-top:6px;
+  border:1px solid currentColor;
+  border-radius:999px;
+  background:transparent;
+  color:inherit;
+  padding:4px 8px;
+  font:inherit;
+  font-size:10px;
+  cursor:pointer;
+}
+
+.remote-gif{
+  display:block;
+  max-width:min(320px,70vw);
+  max-height:320px;
+  margin-top:7px;
+  border-radius:10px;
+  object-fit:contain;
+}
+
+
+/* ===== Reactions ===== */
+
+.react-trigger{
+  border:0;
+  background:transparent;
+  color:inherit;
+  opacity:.38;
+  font-size:17px;
+  padding:2px 5px;
+  cursor:pointer;
+}
+
+.message-row:hover .react-trigger,
+.message-row:focus-within .react-trigger{
+  opacity:.8;
+}
+
+.reaction-tray{
+  display:flex;
+  gap:3px;
+  padding:4px 0;
+}
+
+.reaction-tray button,
+.reaction-pill{
+  border:0;
+  border-radius:999px;
+  padding:4px 7px;
+  background:rgba(127,127,127,.14);
+  font-size:16px;
+  cursor:pointer;
+}
+
+.reaction-pills{
+  display:flex;
+  gap:4px;
+  flex-wrap:wrap;
+  margin-top:2px;
+}
+
+.reaction-pill{
+  font-size:13px;
+}
+
+
+/* ===== Simplified entry / larger nav ===== */
+
+.landing .logo{
+  margin-bottom:22px;
+}
+
+.chat-brand{
+  flex:0 0 auto;
+}
+
+.header-actions{
+  flex:1 1 auto;
+  justify-content:space-evenly;
+  gap:10px;
+}
+
+.nav-link{
+  font-size:13px;
+  padding:0 7px;
+  min-height:44px;
+}
+
+.nav-sep{
+  font-size:12px;
+}
+
+@media(max-width:650px){
+  .landing .logo{
+    margin-bottom:20px;
+  }
+
+  header{
+    gap:7px;
+  }
+
+  .header-actions{
+    flex:1 1 auto;
+    justify-content:space-between;
+    gap:2px;
+  }
+
+  .nav-link{
+    font-size:10px;
+    min-height:34px;
+    padding:0 2px;
+  }
+
+  .nav-sep{
+    font-size:8px;
+  }
+}
+
+
+/* start-screen spacing */
+.landing .logo{
+  margin-bottom:36px;
+}
+
+
+/* ===== Host inbound requests ===== */
+
+#hostRequestsWrap{
+  margin-top:4px;
+}
+
+.host-request{
+  display:grid;
+  gap:8px;
+  padding:10px 0;
+  border-top:1px solid #2d2d2d;
+  text-align:left;
+}
+
+.host-request-name{
+  font-size:16px;
+  font-weight:600;
+}
+
+.host-request-actions{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:7px;
+}
+
+.host-request-empty{
+  color:#888;
+  font-size:12px;
+  padding:12px 0 4px;
+}
+
+
+/* ===== GafChat UI polish ===== */
+
+.header-actions{
+  margin-left:auto;
+  flex:0 1 auto;
+  justify-content:flex-end;
+  gap:7px;
+}
+
+.nav-link{
+  font-size:12px;
+  min-height:40px;
+  padding:0 4px;
+}
+
+.nav-sep{
+  font-size:9px;
+}
+
+.react-trigger.reacted{
+  font-size:18px;
+}
+
+.typing-indicator{
+  flex:0 0 auto;
+}
+
+@media(max-width:650px){
+
+  .chat{
+    width:96vw;
+    margin-left:auto;
+    margin-right:auto;
+  }
+
+  header{
+    padding-left:9px;
+    padding-right:9px;
+  }
+
+  .header-actions{
+    margin-left:auto;
+    flex:0 1 auto;
+    justify-content:flex-end;
+    gap:4px;
+  }
+
+  .nav-link{
+    font-size:9px;
+    min-height:32px;
+    padding:0 2px;
+  }
+
+  .nav-sep{
+    font-size:7px;
+  }
+
+  .messages{
+    padding-left:10px;
+    padding-right:10px;
+  }
+
+  .composer{
+    padding-left:7px;
+    padding-right:7px;
+  }
+}
+
+
+/* ===== Reaction + people badge polish ===== */
+
+.message-row{
+  position:relative;
+}
+
+.reaction-pills{
+  position:absolute;
+  z-index:2;
+  margin:0;
+}
+
+.message-row.mine .reaction-pills{
+  top:-16px;
+  right:-8px;
+}
+
+.message-row.theirs .reaction-pills{
+  top:16px;
+  right:-8px;
+}
+
+.reaction-pill{
+  min-height:28px;
+  padding:2px 7px;
+}
+
+.badge-wrap{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+}
+
+.badge{
+  position:static;
+  display:inline-grid;
+  flex:0 0 auto;
+  min-width:16px;
+  height:16px;
+  padding:0 4px;
+  border:0;
+  font-size:9px;
+}
+
+@media(max-width:650px){
+  .badge-wrap{
+    gap:3px;
+  }
+
+  .badge{
+    min-width:14px;
+    height:14px;
+    font-size:8px;
+    padding:0 3px;
+  }
+}
+
+@media(max-width:650px){
+  .chat{
+    height:calc(100dvh - 30px);
+    max-height:calc(100dvh - 30px);
+  }
+}

@@ -11,12 +11,16 @@ Current snapshot: **v0.5.2**.
 - The room key travels in the URL fragment, so it is not sent to the server as part of the HTTP request.
 - Photos, video and files render or download after decrypting in the recipient browser.
 - HEIC/HEIF photos can be converted in-browser before encryption.
-- Default attachment limits are 100 MB per file and 100 MB total attachment cache per room.
+- The example configuration limits attachments to 25 MB per file and 100 MB total attachment cache per room.
 - Rooms, message history and encrypted attachments live in server memory and disappear on burn, idle expiry or server restart.
 - Room owners can approve, deny and boot participants and can burn the room.
 - Trusted devices can create rooms and join without repeated approval while remaining separate from the system Host role.
 - Social preview metadata and a 1200×630 share card are included.
-- PWA assets are included.
+- Direct PWA push notifications alert the host to CHAT WITH GAF requests.
+- Host approval can create a room and optionally save the requester as trusted.
+- Secure invite tokens, typing indicators, encrypted emoji reactions and clickable links.
+- Installed PWA opens `/host`; host burn returns there, and guests can leave.
+- Mobile sizing and room controls match the locked live v0.5.2 snapshot.
 
 ## Quick start
 
@@ -47,8 +51,8 @@ Important settings:
 ```text
 PORT=8787
 ROOM_TTL_MINUTES=360
-ATTACHMENT_MAX_MB=100
-ROOM_ATTACHMENT_MAX_MB=100
+ATTACHMENT_MAX_MB=25
+ROOM_ATTACHMENT_MAX_MB=25
 ALLOWED_ORIGINS=https://chat.example.com
 PUBLIC_ORIGIN=https://chat.example.com
 HOST_AUTH_SECRET=<long random secret>
@@ -64,6 +68,12 @@ GAFBOX_SHARED_SECRET=<shared secret>
 ```
 
 You do not need the companion approval service for the core room/encryption flow.
+
+## Direct PWA notifications
+
+Set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` using your own Web Push key pair and contact URL or `mailto:` address. With dependencies installed, generate keys with `./node_modules/.bin/web-push generate-vapid-keys`. Keep the private key in the environment. Open `/host`, authenticate, then select ENABLE GAFCHAT ALERTS and allow notifications. The service worker is included as `public/sw.js`.
+
+Host device approval can use the optional companion service above, or the configured recovery password. Push subscriptions persist in `host-push.json`; trusted people persist in the configured `TRUST_DB`. Protect both files and exclude them from source control. Stable host authentication requires a stable secret across restarts.
 
 ## Privacy model
 
@@ -96,6 +106,7 @@ The bundled social preview image is referenced with a site-relative URL so forks
 The repository ignores local/private runtime data including:
 
 - `.env` and `.env.*` except the safe `.env.example`
+- `host-push.json` and its temporary file (private push subscriptions)
 - `trusted-devices.json`
 - temporary trust database files
 - local backup files (`*.before-*`, `*.pre-*`)

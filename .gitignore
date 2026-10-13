@@ -1,16 +1,29 @@
-trusted-devices.json
-trusted-devices.json.tmp
+# Configuration and private runtime data
 .env
 .env.*
 !.env.example
+host-push.json*
+trusted-devices.json*
+*.db
+*.db-*
+*.sqlite*
+*.pem
+*.key
+credentials*.json
+# Dependencies, backups, drafts, logs and temporary files
+node_modules/
+backup*/
+backups/
 *.before-*
+*.pre-*
 *.next.js
 *.next.html
-server.next.js
-public/app.next.js
-public/index.next.html
-node_modules/
+*.bak
+*.backup
+*.tmp
+*.temp
+*.log
+logs/
 .DS_Store
-*.pre-*
 gafbox-gafchat-approval.patch.py
 public/gafchat-social-v1.png

@@ -5,6 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 
+import webpush from "web-push";
+import * as gafPushFs from "node:fs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, "public");
 const PORT = Number(process.env.PORT || 8787);
@@ -19,7 +21,83 @@ const HOST_AUTH_SECRET = String(process.env.HOST_AUTH_SECRET || "") ||
   crypto.randomBytes(32).toString("hex");
 const PUBLIC_ORIGIN = String(process.env.PUBLIC_ORIGIN || "https://example.com").replace(/\/$/,"");
 const HOST_COOKIE = "gafchat_host";
-const HOST_MAX_AGE = 60 * 60 * 24 * 180;
+const HOST_MAX_AGE = 60 * 60 * 24 * 365 * 10;
+
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || PUBLIC_ORIGIN;
+const HOST_PUSH_FILE = new URL("./host-push.json", import.meta.url);
+
+function loadHostPushSubscriptions(){
+  try{
+    const parsed=JSON.parse(gafPushFs.readFileSync(HOST_PUSH_FILE,"utf8"));
+    return Array.isArray(parsed)?parsed:[];
+  }catch{
+    return [];
+  }
+}
+
+let hostPushSubscriptions=loadHostPushSubscriptions();
+
+function saveHostPushSubscriptions(){
+  const tmp=new URL("./host-push.json.tmp",import.meta.url);
+
+  gafPushFs.writeFileSync(
+    tmp,
+    JSON.stringify(hostPushSubscriptions,null,2),
+    {mode:0o600}
+  );
+
+  gafPushFs.renameSync(tmp,HOST_PUSH_FILE);
+
+  try{gafPushFs.chmodSync(HOST_PUSH_FILE,0o600)}catch{}
+}
+
+if(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY){
+  webpush.setVapidDetails(
+    VAPID_SUBJECT,
+    VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY
+  );
+}
+
+async function sendHostPush(title,body,url="/host"){
+  if(!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY || !hostPushSubscriptions.length){
+    return false;
+  }
+
+  let sent=false;
+  const dead=[];
+
+  const payload=JSON.stringify({
+    title,
+    body,
+    url
+  });
+
+  for(const sub of hostPushSubscriptions){
+    try{
+      await webpush.sendNotification(sub,payload);
+      sent=true;
+    }catch(err){
+      if(err?.statusCode===404 || err?.statusCode===410){
+        dead.push(sub.endpoint);
+      }else{
+        console.warn("GafChat push failed:",err?.message||err);
+      }
+    }
+  }
+
+  if(dead.length){
+    hostPushSubscriptions=hostPushSubscriptions.filter(
+      sub=>!dead.includes(sub.endpoint)
+    );
+    saveHostPushSubscriptions();
+  }
+
+  return sent;
+}
+
 
 const TRUST_COOKIE = "gafchat_trusted";
 const TRUST_MAX_AGE = 60 * 60 * 24 * 365;
@@ -93,7 +171,7 @@ function headers() {
       "style-src 'self' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "connect-src 'self' ws: wss:",
-      "img-src 'self' data: blob: https://gaf.nyc",
+      "img-src 'self' data: blob: https:",
       "media-src 'self' blob:",
       "worker-src 'self' blob:",
       "object-src 'none'",
@@ -171,6 +249,7 @@ function auth(roomCode, token) {
 }
 
 function rate(ip) {
+  if(process.env.DISABLE_RATE_LIMIT==="1") return true;
   const t = now(); let b = buckets.get(ip);
   if (!b || t-b.start > 60000) b = {start:t,count:0};
   b.count++; buckets.set(ip,b); return b.count <= 100;
@@ -262,7 +341,86 @@ const server = http.createServer(async (req,res)=>{
     if(req.method==="GET" && url.pathname==="/api/health") return json(res,200,{ok:true,version:"0.5.2",rooms:rooms.size});
 
     if(req.method==="GET" && url.pathname==="/api/host/status"){
-      return json(res,200,{ok:true,host:isHost(req),passwordConfigured:Boolean(HOST_PASSWORD),approvalConfigured:Boolean(GAFBOX_URL&&GAFBOX_SHARED_SECRET),requests: isHost(req)?roomRequests.slice(-10).reverse():[]});
+      const host=isHost(req);
+
+      const data={
+        ok:true,
+        host,
+        passwordConfigured:Boolean(HOST_PASSWORD),
+        approvalConfigured:Boolean(GAFBOX_URL&&GAFBOX_SHARED_SECRET),
+        pushConfigured:Boolean(VAPID_PUBLIC_KEY&&VAPID_PRIVATE_KEY),
+        requests:host
+          ?roomRequests
+            .filter(x=>x.status==="pending"&&x.expiresAt>now())
+            .slice(-10)
+            .reverse()
+            .map(({id,name,at,userAgent,guestPub})=>({id,name,at,userAgent,guestPub}))
+          :[]
+      };
+
+      if(host){
+        const t=signHost({
+          device:rid(10),
+          iat:Math.floor(Date.now()/1000),
+          exp:Math.floor(Date.now()/1000)+HOST_MAX_AGE
+        });
+
+        return json(res,200,data,{"Set-Cookie":hostCookie(t)});
+      }
+
+      return json(res,200,data);
+    }
+
+    if(req.method==="GET" && url.pathname==="/api/push/public-key"){
+      return json(res,200,{
+        ok:true,
+        publicKey:VAPID_PUBLIC_KEY
+      });
+    }
+
+    if(req.method==="POST" && url.pathname==="/api/host/push/subscribe"){
+      if(!isHost(req))
+        return json(res,403,{ok:false,error:"Host only."});
+
+      if(!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY)
+        return json(res,503,{ok:false,error:"Push is not configured."});
+
+      const body=await readJson(req);
+      const sub=body.subscription;
+
+      if(
+        !sub ||
+        typeof sub.endpoint!=="string" ||
+        !sub.endpoint.startsWith("https://") ||
+        !sub.keys?.p256dh ||
+        !sub.keys?.auth
+      ){
+        return json(res,400,{ok:false,error:"Invalid push subscription."});
+      }
+
+      hostPushSubscriptions=hostPushSubscriptions.filter(
+        x=>x.endpoint!==sub.endpoint
+      );
+
+      hostPushSubscriptions.push(sub);
+      saveHostPushSubscriptions();
+
+      return json(res,200,{ok:true,subscribed:true});
+    }
+
+    if(req.method==="POST" && url.pathname==="/api/host/push/unsubscribe"){
+      if(!isHost(req))
+        return json(res,403,{ok:false,error:"Host only."});
+
+      const body=await readJson(req);
+      const endpoint=String(body.endpoint||"");
+
+      hostPushSubscriptions=hostPushSubscriptions.filter(
+        x=>x.endpoint!==endpoint
+      );
+
+      saveHostPushSubscriptions();
+      return json(res,200,{ok:true});
     }
 
     if(req.method==="POST" && url.pathname==="/api/host/approval/start"){
@@ -367,21 +525,173 @@ const server = http.createServer(async (req,res)=>{
     }
 
     if(req.method==="POST" && url.pathname==="/api/room-request"){
-      const body=await readJson(req); const name=cleanName(body.name)||"Someone";
-      const request={id:rid(8),name,at:now(),userAgent:String(req.headers["user-agent"]||"").slice(0,180)};
-      roomRequests.push(request); if(roomRequests.length>50)roomRequests.shift();
-      const push=await postGafBox("/api/gafchat/notify",{source:"gafchat",type:"room_request",title:"GafChat room requested",body:`${name} wants a room`,url:`${PUBLIC_ORIGIN}/host`});
-      return json(res,202,{ok:true,delivered:push.delivered});
+      const body=await readJson(req);
+      const name=cleanName(body.name);
+      const guestPub=body.guestPub;
+
+      if(!name) return json(res,400,{ok:false,error:"Enter your name."});
+      if(!guestPub || guestPub.kty!=="EC" || guestPub.crv!=="P-256" || !guestPub.x || !guestPub.y)
+        return json(res,400,{ok:false,error:"Could not create secure request."});
+
+      const claim=rid(32);
+      const request={
+        id:rid(10),
+        name,
+        at:now(),
+        expiresAt:now()+15*60*1000,
+        userAgent:String(req.headers["user-agent"]||"").slice(0,180),
+        guestPub,
+        claimHash:sha(claim),
+        status:"pending"
+      };
+
+      roomRequests.push(request);
+      if(roomRequests.length>50) roomRequests.shift();
+
+      const directPush=await sendHostPush(
+        "GafChat",
+        `${name} wants to chat`,
+        "/host"
+      );
+
+      return json(res,202,{
+        ok:true,
+        delivered:directPush,
+        id:request.id,
+        claim,
+        expiresAt:request.expiresAt
+      });
+    }
+
+    let inbound = url.pathname.match(/^\/api\/room-request\/([^/]+)$/);
+
+    if(req.method==="GET" && inbound){
+      const r=roomRequests.find(x=>x.id===inbound[1]);
+      if(!r || r.expiresAt<now())
+        return json(res,410,{ok:false,error:"Request expired."});
+
+      const claim=url.searchParams.get("claim")||"";
+      if(!tokenMatches(r.claimHash,claim))
+        return json(res,403,{ok:false,error:"Invalid request."});
+
+      if(r.status==="pending")
+        return json(res,200,{ok:true,status:"pending"});
+
+      if(r.status==="denied")
+        return json(res,200,{ok:true,status:"denied"});
+
+      if(r.status==="approved"){
+        const result=r.guestResult;
+        r.status="consumed";
+        return json(res,200,{ok:true,status:"approved",...result});
+      }
+
+      return json(res,410,{ok:false,error:"Request closed."});
+    }
+
+    inbound = url.pathname.match(/^\/api\/room-request\/([^/]+)\/decision$/);
+
+    if(req.method==="POST" && inbound){
+      if(!isHost(req))
+        return json(res,403,{ok:false,error:"Host only."});
+
+      const r=roomRequests.find(x=>x.id===inbound[1] && x.status==="pending");
+      if(!r)
+        return json(res,404,{ok:false,error:"Request not found."});
+
+      const body=await readJson(req);
+
+      if(body.approve===false){
+        r.status="denied";
+        return json(res,200,{ok:true,status:"denied"});
+      }
+
+      const hostPub=body.hostPub;
+      if(!hostPub || hostPub.kty!=="EC" || hostPub.crv!=="P-256" || !hostPub.x || !hostPub.y)
+        return json(res,400,{ok:false,error:"Secure host key missing."});
+
+      let roomCode;
+      do roomCode=code(); while(rooms.has(roomCode));
+
+      const ownerToken=rid();
+      const ownerId=rid(10);
+      const guestToken=rid();
+      const guestId=rid(10);
+      const inviteToken=rid(32);
+
+      const ownerMember={id:ownerId,name:"Gaf",owner:true};
+      const guestMember={id:guestId,name:r.name,owner:false};
+
+      const room={
+        code:roomCode,
+        inviteHash:sha(inviteToken),
+        createdAt:now(),
+        touchedAt:now(),
+        ownerId,
+        members:new Map(),
+        pending:new Map(),
+        approvals:new Map(),
+        clients:new Set(),
+        online:new Set(),
+        disconnectTimers:new Map(),
+        history:[],
+        notices:new Map(),
+        attachments:new Map(),
+        attachmentBytes:0
+      };
+
+      room.members.set(ownerId,{...ownerMember,tokenHash:sha(ownerToken)});
+      room.members.set(guestId,{...guestMember,tokenHash:sha(guestToken)});
+      rooms.set(roomCode,room);
+
+      let trustToken="";
+
+      if(body.save===true){
+        pruneTrustDb();
+        trustToken=rid(32);
+
+        trustDb.invites.push({
+          tokenHash:sha(trustToken),
+          label:r.name,
+          createdAt:now(),
+          expiresAt:now()+10*60*1000
+        });
+
+        saveTrustDb();
+      }
+
+      r.status="approved";
+
+      r.guestResult={
+        room:roomCode,
+        createdAt:room.createdAt,
+        token:guestToken,
+        member:guestMember,
+        hostPub,
+        ...(trustToken?{trustToken}:{})
+      };
+
+      return json(res,200,{
+        ok:true,
+        status:"approved",
+        room:roomCode,
+        createdAt:room.createdAt,
+        token:ownerToken,
+        member:ownerMember,
+        inviteToken,
+        guestPub:r.guestPub,
+        saved:Boolean(trustToken)
+      });
     }
 
     if(req.method==="POST" && url.pathname==="/api/rooms"){
       if(!canCreateRoom(req)) return json(res,403,{ok:false,error:"Trusted device only."});
       const body = await readJson(req); const name = cleanName(body.name)||"Gaf";
       let roomCode; do roomCode = code(); while(rooms.has(roomCode));
-      const ownerToken = rid(), ownerId = rid(10);
-      const room = {code:roomCode,createdAt:now(),touchedAt:now(),ownerId,members:new Map(),pending:new Map(),approvals:new Map(),clients:new Set(),online:new Set(),disconnectTimers:new Map(),history:[],notices:new Map(),attachments:new Map(),attachmentBytes:0};
+      const ownerToken = rid(), ownerId = rid(10), inviteToken = rid(32);
+      const room = {code:roomCode,inviteHash:sha(inviteToken),createdAt:now(),touchedAt:now(),ownerId,members:new Map(),pending:new Map(),approvals:new Map(),clients:new Set(),online:new Set(),disconnectTimers:new Map(),history:[],notices:new Map(),attachments:new Map(),attachmentBytes:0};
       room.members.set(ownerId,{id:ownerId,name,owner:true,tokenHash:sha(ownerToken)}); rooms.set(roomCode,room);
-      return json(res,201,{ok:true,room:roomCode,createdAt:room.createdAt,token:ownerToken,member:{id:ownerId,name,owner:true}});
+      return json(res,201,{ok:true,room:roomCode,inviteToken,createdAt:room.createdAt,token:ownerToken,member:{id:ownerId,name,owner:true}});
     }
 
     let m = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]{6})\/status$/i);
@@ -399,12 +709,14 @@ const server = http.createServer(async (req,res)=>{
       if(!name) return json(res,400,{ok:false,error:"Enter your name."});
 
       const trusted=trustedDevice(req);
-      if(trusted){
+      const invited=Boolean(body.inviteToken && tokenMatches(room.inviteHash,body.inviteToken));
+
+      if(trusted || invited){
         const token=rid(),member={id:rid(10),name,owner:false};
         room.members.set(member.id,{...member,tokenHash:sha(token)});
         room.touchedAt=now();
         broadcast(room,{type:"member_joined",member});
-        return json(res,200,{ok:true,status:"approved",token,member,trusted:true});
+        return json(res,200,{ok:true,status:"approved",token,member,trusted:Boolean(trusted),invited});
       }
 
       const requestId=rid(12), claim=rid();
@@ -433,8 +745,32 @@ const server = http.createServer(async (req,res)=>{
       const body=await readJson(req),a=auth(m[1],body.token); if(!a?.member.owner)return json(res,403,{ok:false,error:"Owner only."});
       const p=a.room.pending.get(body.requestId); if(!p)return json(res,404,{ok:false,error:"Request not found."}); a.room.pending.delete(p.id);
       if(body.approve===false){a.room.approvals.set(p.id,{status:"denied",claimHash:p.claimHash});return json(res,200,{ok:true,status:"denied"})}
-      const token=rid(),member={id:rid(10),name:p.name,owner:false}; a.room.members.set(member.id,{...member,tokenHash:sha(token)}); a.room.approvals.set(p.id,{status:"approved",claimHash:p.claimHash,token,member});
-      broadcast(a.room,{type:"member_joined",member}); return json(res,200,{ok:true,status:"approved"});
+
+      let trustToken="";
+      if(body.save===true){
+        pruneTrustDb();
+        trustToken=rid(32);
+        trustDb.invites.push({
+          tokenHash:sha(trustToken),
+          label:p.name,
+          createdAt:now(),
+          expiresAt:now()+10*60*1000
+        });
+        saveTrustDb();
+      }
+
+      const token=rid(),member={id:rid(10),name:p.name,owner:false};
+      a.room.members.set(member.id,{...member,tokenHash:sha(token)});
+      a.room.approvals.set(p.id,{
+        status:"approved",
+        claimHash:p.claimHash,
+        token,
+        member,
+        ...(trustToken?{trustToken}:{})
+      });
+
+      broadcast(a.room,{type:"member_joined",member});
+      return json(res,200,{ok:true,status:"approved",saved:Boolean(trustToken)});
     }
 
     m = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]{6})\/boot$/i);
@@ -516,14 +852,51 @@ wss.on("connection",ws=>{
     let msg;try{msg=JSON.parse(raw.toString("utf8"))}catch{return}
     if(msg.type==="leave"){ws.intentionalLeave=true;try{ws.close(1000,"Left")}catch{};return}
     const member=room.members.get(ws.memberId); if(!member)return;
+    if(msg.type==="typing"){
+      broadcast(room,{
+        type:"typing",
+        sender:{id:member.id,name:member.name},
+        active:Boolean(msg.active)
+      });
+      return;
+    }
+
+    if(msg.type==="reaction"){
+      const targetId=String(msg.targetId||"");
+      const ciphertext=String(msg.ciphertext||"");
+      const iv=String(msg.iv||"");
+
+      if(!targetId||!ciphertext||!iv||ciphertext.length>2000||iv.length>64)return;
+
+      const exists=room.history.some(x=>(x.type==="message"||x.type==="attachment") && x.id===targetId);
+      if(!exists)return;
+
+      const envelope={
+        type:"reaction",
+        id:rid(10),
+        targetId,
+        sender:{id:member.id,name:member.name},
+        sentAt:now(),
+        ciphertext,
+        iv
+      };
+
+      room.history.push(envelope);
+      if(room.history.length>250)room.history.shift();
+
+      broadcast(room,envelope);
+      room.touchedAt=now();
+      return;
+    }
+
     if(msg.type==="message"){
       const ciphertext=String(msg.ciphertext||""),iv=String(msg.iv||""); if(!ciphertext||!iv||ciphertext.length>50000||iv.length>64)return;
-      const envelope={type:"message",sender:{id:member.id,name:member.name},sentAt:now(),ciphertext,iv}; room.history.push(envelope); if(room.history.length>250)room.history.shift(); broadcast(room,envelope); room.touchedAt=now(); return;
+      const envelope={type:"message",id:rid(10),sender:{id:member.id,name:member.name},sentAt:now(),ciphertext,iv}; room.history.push(envelope); if(room.history.length>250)room.history.shift(); broadcast(room,envelope); room.touchedAt=now(); return;
     }
     if(msg.type==="attachment"){
       const att=msg.attachment||{},id=String(att.id||""),iv=String(att.iv||""),metaIv=String(att.metaIv||""),metaCiphertext=String(att.metaCiphertext||"");
       const cached=room.attachments.get(id); if(!cached||cached.memberId!==member.id||!iv||!metaIv||!metaCiphertext||iv.length>64||metaIv.length>64||metaCiphertext.length>12000)return;
-      const envelope={type:"attachment",sender:{id:member.id,name:member.name},sentAt:now(),attachment:{id,iv,metaIv,metaCiphertext,bytes:cached.bytes}};
+      const envelope={type:"attachment",id:rid(10),sender:{id:member.id,name:member.name},sentAt:now(),attachment:{id,iv,metaIv,metaCiphertext,bytes:cached.bytes}};
       room.history.push(envelope); if(room.history.length>250)room.history.shift(); broadcast(room,envelope); room.touchedAt=now(); return;
     }
   });

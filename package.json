@@ -8,6 +8,7 @@
     "check": "node --check server.js && node --check public/app.js && node --test"
   },
   "dependencies": {
+    "web-push": "^3.6.7",
     "ws": "^8.18.0"
   },
   "engines": {
