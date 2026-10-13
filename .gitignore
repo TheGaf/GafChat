@@ -1,0 +1,16 @@
+trusted-devices.json
+trusted-devices.json.tmp
+.env
+.env.*
+!.env.example
+*.before-*
+*.next.js
+*.next.html
+server.next.js
+public/app.next.js
+public/index.next.html
+node_modules/
+.DS_Store
+*.pre-*
+gafbox-gafchat-approval.patch.py
+public/gafchat-social-v1.png

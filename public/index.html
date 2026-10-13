@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#121212">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="/icons/icon-192.png">
+  <title>GafChat</title>
+  <meta name="description" content="Private, ephemeral encrypted chat.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="GafChat">
+  <meta property="og:description" content="Private, ephemeral encrypted chat.">
+  <meta property="og:image" content="/gafchat-social-v2.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="GafChat">
+  <meta name="twitter:description" content="Private, ephemeral encrypted chat.">
+  <meta name="twitter:image" content="/gafchat-social-v2.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css?v=053">
+</head>
+<body>
+<main id="app">
+  <section id="landing" class="screen landing">
+    <div class="shell">
+      <img class="logo" src="/gafchat-logo.png" alt="GafChat">
+
+      <section id="hostCard" class="compact-card hidden">
+        <div class="eyebrow">HOST</div>
+        <input id="hostName" maxlength="32" autocomplete="nickname" placeholder="Your name">
+        <button id="startRoom" class="primary">START A ROOM</button>
+      </section>
+
+      <section id="guestCard" class="compact-card">
+        <input id="joinCode" maxlength="6" autocomplete="off" placeholder="Room code">
+        <input id="guestName" maxlength="32" autocomplete="nickname" placeholder="Your name">
+        <button id="joinRoom" class="secondary">JOIN ROOM</button>
+        <button id="requestRoom" class="text-btn">REQUEST A ROOM</button>
+      </section>
+
+      <section id="hostGate" class="compact-card hidden">
+        <button id="confirmOnGafBox" class="primary">CONFIRM WITH APPROVAL SERVICE</button>
+        <div id="approvalState" class="approval-state hidden"></div>
+        <button id="recoveryToggle" class="text-btn">USE RECOVERY PASSWORD</button>
+        <div id="recoveryWrap" class="recovery-wrap hidden">
+          <input id="hostPassword" type="password" autocomplete="current-password" placeholder="Recovery password">
+          <button id="confirmHost" class="secondary">TRUST THIS DEVICE</button>
+        </div>
+      </section>
+
+      <div id="landingError" class="error"></div>
+    </div>
+  </section>
+
+  <section id="waiting" class="screen waiting hidden">
+    <div class="shell">
+      <img class="logo small-logo" src="/gafchat-logo.png" alt="GafChat">
+      <div class="compact-card waiting-card">
+        <h2>WAITING FOR APPROVAL</h2>
+        <p>The room owner has your request.</p>
+        <div class="spinner"></div>
+        <button id="cancelWait">CANCEL</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="chat" class="screen chat hidden">
+    <header>
+      <div class="chat-brand">
+        <img class="chat-logo" src="/gafchat-logo.png" alt="">
+        <div><div id="roomLabel" class="room-label"></div></div>
+      </div>
+      <nav class="header-actions" aria-label="Room actions">
+        <button id="inviteBtn" class="nav-link" type="button">INVITE</button>
+        <span class="nav-sep" aria-hidden="true">•</span>
+        <button id="peopleBtn" class="nav-link badge-wrap" type="button">WHO’S HERE<span id="peopleBadge" class="badge hidden">0</span></button>
+        <span class="nav-sep" aria-hidden="true">•</span>
+        <button id="leaveBtn" class="nav-link" type="button">LEAVE ROOM</button>
+        <span class="nav-sep owner-only-sep" aria-hidden="true">•</span>
+        <button id="burnBtn" class="nav-link burn-nav hidden" type="button">BURN ROOM</button>
+      </nav>
+    </header>
+
+    <div id="alertBar" class="join-alert hidden"><span id="alertText"></span><button id="reviewBtn">REVIEW</button></div>
+
+    <aside id="peoplePanel" class="panel hidden">
+      <div class="panel-top"><h3>PEOPLE</h3><button id="closePeople">CLOSE</button></div>
+      <div id="pendingWrap" class="hidden"><div class="section-label">WAITING TO JOIN</div><div id="pendingList"></div></div>
+      <div id="noticeWrap" class="hidden"><div class="section-label">ALERTS</div><div id="noticeList"></div></div>
+      <div class="section-label">HERE NOW</div><div id="memberList"></div>
+    </aside>
+
+    <div id="messages" class="messages"></div>
+    <form id="composer" class="composer">
+      <input id="fileInput" type="file" multiple hidden>
+      <button id="attachBtn" class="attach-btn" type="button" title="Attach" aria-label="Attach">📎</button>
+      <textarea id="messageInput" rows="1" maxlength="4000" placeholder="Message"></textarea>
+      <button class="send-btn" type="submit">SEND</button>
+    </form>
+  </section>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <div id="burnModal" class="modal hidden"><div class="modal-box">
+    <h2>BURN THIS ROOM?</h2><p>This destroys the room and disconnects everyone. No undo.</p>
+    <div class="modal-actions"><button id="cancelBurn">CANCEL</button><button id="confirmBurn" class="burn-btn">BURN ROOM</button></div>
+  </div></div>
+</main>
+<script src="/heic2any.min.js?v=1"></script>
+<script type="module" src="/app.js?v=059"></script>
+</body>
+</html>
