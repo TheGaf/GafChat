@@ -112,4 +112,4 @@ Rate limiting, CSP/security headers, encrypted in-memory room data and invite-on
 
 ## License
 
-No open-source license has been selected yet. Until one is added, normal copyright rules apply.
+MIT License. See `LICENSE`.
