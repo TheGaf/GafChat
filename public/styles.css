@@ -410,3 +410,7 @@
     max-height:calc(100dvh - 30px);
   }
 }
+
+/* Keep the host start card limited to its name field and room button. */
+#hostCard #hostRequestsWrap,
+#hostCard #enablePush{display:none!important}
