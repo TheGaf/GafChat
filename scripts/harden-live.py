@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Install the pinned GafChat hardening release. No environment or private-state upload."""
-import argparse,concurrent.futures,hashlib,json,os,pathlib,shutil,signal,stat,subprocess,sys,tempfile,time,urllib.request
+import argparse,concurrent.futures,hashlib,json,os,pathlib,re,shutil,signal,stat,subprocess,sys,tempfile,time,urllib.request
+from urllib.parse import urlsplit
 
 RELEASE_REF = "b77caf95eb4a6eb9527eca7b027f90f7bd1e6ed0"
 FILES = {'server.js': '1af9e47d155f0e9d6e5e6da6b3b45ba33f8955f26e178568d9b501389ab4ed7e', 'public/app.js': '5bcf913d801d9e1e92163a3cdbd35ac4af3542553d591f390837329a6672d544', 'public/index.html': '245732b5b246b9a7368b88fe3708cdd7cee5adb35bba3dbac7590166fd320406', 'public/styles.css': '3c79e4d95788bfd96de6a223d39444530443ce68e30a2a965daa5680d9d273f9', 'public/sw.js': '8aee3eee9446671356ee24bea2f19fdff576843a907757cdf61449bdb45865cb', 'package.json': 'efa47c80e13117e12125203572425083ade7ee8b1ab6eeb7402ed7d22cf6e2cf', 'package-lock.json': 'cdd4b6fa6d2c047d115504d3524858d49adac91eac04f275affe9351587f6355', '.env.example': '2488ae1cf92e3182216837206625108808a19fe5b1911cc6c4ee76653d6a569c', 'README.md': '8ab70f54e57c4e052b715e244b1f8d482b8e643af96bb2e8a2c46f1e51ee78f6', 'test/basic.test.js': 'db71970bb082ceede5e9d734fa7f0913fc6644178bdb2dcbd3d60f1770381b6d', 'test/hardening.test.js': 'b2bae127da98dda3fc24e552235896124f2e7706691b9cefabcc71cd77ed8fe9', 'public/manifest.json': 'c54e1b7635e951945203d3ee4a59285b94785719af98d01f374df26518cdd8e4', 'third_party/Titillium-Web-OFL.txt': '74a09413ee50672765c52b8356bc03b68b274bc926888b37bb9092c8dcba09fd', 'public/fonts/titillium-web-latin-300-normal.woff2': 'b6287de6fc5553c57520eedd963a16b66f3c192a2c65916243a0a92a8e0e8a8f', 'public/fonts/titillium-web-latin-400-normal.woff2': '861b80b49d2a634d8746e2e45c672309d9ba69a2fdd95da2af034d7a1d09b3f9', 'public/fonts/titillium-web-latin-600-normal.woff2': 'f356ff5613e1b6789a47ae3bd6b72fa6fb61d44493811bcb758fb4229b7a8bcb', 'public/fonts/titillium-web-latin-700-normal.woff2': '9e3162d81ed6681322ab34791660f1b45c79945197e7a7dbb217005b2926caf4'}
@@ -49,9 +50,34 @@ def baseline(app):
     for relative,allowed in BASELINES.items():
         if digest(app/relative) not in allowed:raise RuntimeError(f"{relative} differs from the reviewed build. No files changed.")
 
-def sandbox(state_dirs):
+def effective_origin(values,app):
+    value=values.get("PUBLIC_ORIGIN")
+    if not value:
+        match=re.search(r'const PUBLIC_ORIGIN = String\(process\.env\.PUBLIC_ORIGIN \|\| "([^"]+)"\)',(app/"server.js").read_text())
+        if not match:raise RuntimeError("Cannot determine the original public origin. No files changed.")
+        value=match.group(1)
+    parsed=urlsplit(value)
+    if parsed.scheme not in ["http","https"] or not parsed.hostname or parsed.username or parsed.password or parsed.path not in ["","/"] or parsed.query or parsed.fragment:
+        raise RuntimeError("Invalid public origin. No files changed.")
+    value=parsed.scheme+"://"+parsed.netloc
+    if not re.fullmatch(r"https?://[A-Za-z0-9.:[\]-]+",value):raise RuntimeError("Unsupported public-origin syntax")
+    return value
+
+def browser_assets_healthy(health_url,origin):
+    base=urlsplit(health_url)
+    for asset in ["/app.js?v=053","/styles.css?v=053","/fonts/titillium-web-latin-400-normal.woff2"]:
+        try:
+            request=urllib.request.Request(base.scheme+"://"+base.netloc+asset,headers={"Origin":origin})
+            with urllib.request.urlopen(request,timeout=3) as response:
+                if response.status!=200:return False
+                response.read()
+        except Exception:return False
+    return True
+
+def sandbox(state_dirs,public_origin=None):
     # Writable exceptions contain private state only; application code stays read-only.
     paths=" ".join('"'+str(p).replace("%","%%")+'"' for p in state_dirs)
+    origin_setting='Environment="PUBLIC_ORIGIN='+public_origin.replace("%","%%")+'"' if public_origin else ""
     return f"""[Service]
 NoNewPrivileges=yes
 PrivateTmp=yes
@@ -67,6 +93,7 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 CapabilityBoundingSet=
 UMask=0077
 ReadWritePaths={paths}
+{origin_setting}
 LimitNOFILE=1024
 TasksMax=64
 MemoryMax=1G
@@ -79,7 +106,7 @@ data=pathlib.Path('/proc/'+sys.argv[1]+'/environ').read_bytes()
 values={}
 for item in data.split(b'\\0'):
  k,sep,v=item.partition(b'=')
- if k in [b'TRUST_DB',b'HOST_PUSH_FILE']:values[k.decode()]=v.decode()
+ if k in [b'TRUST_DB',b'HOST_PUSH_FILE',b'PUBLIC_ORIGIN']:values[k.decode()]=v.decode()
 print(json.dumps(values))
 """
     values=json.loads(output(["sudo","python3","-c",code,pid]))
@@ -93,9 +120,9 @@ print(json.dumps(values))
         if not file.parent.is_dir():raise RuntimeError(f"Missing private state directory for {key}. No files changed.")
         if any(c in str(file.parent) for c in ['"','\\','\n','\r']):raise RuntimeError("Unsupported state-directory name")
         dirs.add(file.parent)
-    return sorted(dirs)
+    return sorted(dirs),effective_origin(values,app)
 
-def apply_release(app,payload,backup,node,dropin,dropin_text,health_url):
+def apply_release(app,payload,backup,node,dropin,dropin_text,health_url,public_origin=None):
     records={};applied=False
     for relative in FILES:
         target=app/relative
@@ -123,6 +150,7 @@ def apply_release(app,payload,backup,node,dropin,dropin_text,health_url):
         run(["sudo","systemctl","daemon-reload"])
         run(["sudo","systemctl","restart",SERVICE])
         if not healthy(health_url,"0.5.3"):raise RuntimeError("The hardened service did not pass its health check")
+        if public_origin and not browser_assets_healthy(health_url,public_origin):raise RuntimeError("Browser-origin asset checks failed")
         if output(["systemctl","is-active",SERVICE])!="active":raise RuntimeError("The service is not active")
     except BaseException:
         if applied:
@@ -166,7 +194,7 @@ def main():
         if not user or user=="root":raise RuntimeError("GafChat needs its dedicated non-root service account first")
         pid=output(["systemctl","show","-p","MainPID","--value",SERVICE])
         node=args.node or output(["sudo","readlink","-f",f"/proc/{pid}/exe"])
-        state_dirs=runtime_state(pid,app)
+        state_dirs,public_origin=runtime_state(pid,app)
         if not healthy("http://127.0.0.1:8787/api/health","0.5.2"):raise RuntimeError("The current service did not pass its pre-upgrade health check")
     major=int(output([node,"-p","process.versions.node.split('.')[0]"]))
     if major<22:raise RuntimeError("Node 22 or newer is required")
@@ -187,7 +215,7 @@ def main():
         if stat.S_IMODE(parent.stat().st_mode)&0o077:raise RuntimeError("Backup directory must be private (mode 700)")
         backup=pathlib.Path(tempfile.mkdtemp(prefix=time.strftime("hardening-%Y%m%d-%H%M%S-"),dir=parent))
         dropin=pathlib.Path("/etc/systemd/system/gafchat.service.d/40-hardening.conf")
-        apply_release(app,stage,backup,node,dropin,sandbox(state_dirs),"http://127.0.0.1:8787/api/health")
+        apply_release(app,stage,backup,node,dropin,sandbox(state_dirs,public_origin),"http://127.0.0.1:8787/api/health",public_origin=public_origin)
         print(f"ALL CLEAR: GafChat v0.5.3 is running. Backup: {backup}")
         print("Close and reopen GafChat on each device. Open rooms ended during the restart.")
 
