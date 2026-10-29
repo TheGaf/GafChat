@@ -26,7 +26,7 @@ const HOST_MAX_AGE = 60 * 60 * 24 * 365 * 10;
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || PUBLIC_ORIGIN;
-const HOST_PUSH_FILE = new URL("./host-push.json", import.meta.url);
+const HOST_PUSH_FILE = path.resolve(process.env.HOST_PUSH_FILE || path.join(__dirname, "host-push.json"));
 
 function loadHostPushSubscriptions(){
   try{
@@ -40,7 +40,7 @@ function loadHostPushSubscriptions(){
 let hostPushSubscriptions=loadHostPushSubscriptions();
 
 function saveHostPushSubscriptions(){
-  const tmp=new URL("./host-push.json.tmp",import.meta.url);
+  const tmp=`${HOST_PUSH_FILE}.tmp`;
 
   gafPushFs.writeFileSync(
     tmp,

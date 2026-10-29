@@ -2,7 +2,7 @@
 
 Private, temporary, self-hosted encrypted chat.
 
-Current snapshot: **v0.5.2**.
+Current snapshot: **v0.5.2**, synced with the running installation on October 29, 2026.
 
 ## What it does
 
@@ -36,6 +36,8 @@ npm start
 
 GafChat reads configuration from process environment variables; it does not automatically parse `.env` files.
 
+Before the first launch, replace `HOST_AUTH_SECRET` with a long random secret and configure either `HOST_PASSWORD` or the optional companion approval service. Without one of those login methods, a new installation cannot authenticate its first host. To use the standalone password flow, open `/host` and choose USE RECOVERY PASSWORD. Use HTTPS for browser features and secure cookies.
+
 Run checks with:
 
 ```bash
@@ -52,12 +54,13 @@ Important settings:
 PORT=8787
 ROOM_TTL_MINUTES=360
 ATTACHMENT_MAX_MB=25
-ROOM_ATTACHMENT_MAX_MB=25
+ROOM_ATTACHMENT_MAX_MB=100
 ALLOWED_ORIGINS=https://chat.example.com
 PUBLIC_ORIGIN=https://chat.example.com
 HOST_AUTH_SECRET=<long random secret>
 HOST_PASSWORD=<optional recovery password>
 TRUST_DB=./trusted-devices.json
+HOST_PUSH_FILE=./host-push.json
 ```
 
 The optional companion approval integration uses the historical environment names below for compatibility:
@@ -73,7 +76,7 @@ You do not need the companion approval service for the core room/encryption flow
 
 Set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` using your own Web Push key pair and contact URL or `mailto:` address. With dependencies installed, generate keys with `./node_modules/.bin/web-push generate-vapid-keys`. Keep the private key in the environment. Open `/host`, authenticate, then select ENABLE GAFCHAT ALERTS and allow notifications. The service worker is included as `public/sw.js`.
 
-Host device approval can use the optional companion service above, or the configured recovery password. Push subscriptions persist in `host-push.json`; trusted people persist in the configured `TRUST_DB`. Protect both files and exclude them from source control. Stable host authentication requires a stable secret across restarts.
+Host device approval can use the optional companion service above, or the configured recovery password. Push subscriptions persist in the configured `HOST_PUSH_FILE` (default: `host-push.json` beside `server.js`); trusted people persist in the configured `TRUST_DB`. Protect both files and exclude them from source control. Stable host authentication requires a stable secret across restarts.
 
 ## Privacy model
 
@@ -98,6 +101,8 @@ Clearing browser site data or moving to another browser/device requires enrollme
 ## Self-hosting notes
 
 GafChat is designed to sit behind HTTPS in production. Set `ALLOWED_ORIGINS` and `PUBLIC_ORIGIN` to your own deployment URL. The core room/encryption flow does not depend on the original author's server layout, reverse proxy, Cloudflare account or companion services.
+
+For an installation running under a dedicated service account, set `TRUST_DB` and `HOST_PUSH_FILE` to absolute paths in a private writable state directory, such as `/var/lib/gafchat`. Create the directory first and give the service account access. Push-subscription writes use a temporary file beside `HOST_PUSH_FILE`, so the application directory can remain read-only and state may live on a separate filesystem. No secrets or runtime state from the original installation are included.
 
 The bundled social preview image is referenced with a site-relative URL so forks do not point back to the original deployment.
 
@@ -124,3 +129,4 @@ Rate limiting, CSP/security headers, encrypted in-memory room data and invite-on
 ## License
 
 MIT License. See `LICENSE`.
+
