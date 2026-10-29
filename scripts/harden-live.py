@@ -3,9 +3,9 @@
 import argparse,concurrent.futures,hashlib,json,os,pathlib,re,shutil,signal,stat,subprocess,sys,tempfile,time,urllib.request
 from urllib.parse import urlsplit
 
-RELEASE_REF = "40f1557b1842b0f76f6e64773bd595267255165f"
-FILES = {'server.js': '56b2a726504bf50bd40fead92508ecccd9e24ba4c60fd70445e83ef25d4225bd', 'public/app.js': '7a85f37d6a8820294e85bb568af46079c2b0dea9a9209351a94a278a4e45b473', 'public/index.html': 'a6f02a69bef032124ad9705d7a79a86f1e4f1141c1d0c789fb1035893dd9b17f', 'public/styles.css': '3c79e4d95788bfd96de6a223d39444530443ce68e30a2a965daa5680d9d273f9', 'public/sw.js': '8aee3eee9446671356ee24bea2f19fdff576843a907757cdf61449bdb45865cb', 'package.json': 'efa47c80e13117e12125203572425083ade7ee8b1ab6eeb7402ed7d22cf6e2cf', 'package-lock.json': 'cdd4b6fa6d2c047d115504d3524858d49adac91eac04f275affe9351587f6355', '.env.example': '2488ae1cf92e3182216837206625108808a19fe5b1911cc6c4ee76653d6a569c', 'README.md': '041e5ed937a4e620917a2be2fce316f9c33120e2d9a918d56c41127f497ffd1f', 'test/basic.test.js': 'db71970bb082ceede5e9d734fa7f0913fc6644178bdb2dcbd3d60f1770381b6d', 'test/hardening.test.js': '618a1187b50e731a9250bea4883a0039fdea7e359d946f90307fc88d38f5bc6b', 'public/manifest.json': 'c54e1b7635e951945203d3ee4a59285b94785719af98d01f374df26518cdd8e4', 'third_party/Titillium-Web-OFL.txt': '74a09413ee50672765c52b8356bc03b68b274bc926888b37bb9092c8dcba09fd', 'public/fonts/titillium-web-latin-300-normal.woff2': 'b6287de6fc5553c57520eedd963a16b66f3c192a2c65916243a0a92a8e0e8a8f', 'public/fonts/titillium-web-latin-400-normal.woff2': '861b80b49d2a634d8746e2e45c672309d9ba69a2fdd95da2af034d7a1d09b3f9', 'public/fonts/titillium-web-latin-600-normal.woff2': 'f356ff5613e1b6789a47ae3bd6b72fa6fb61d44493811bcb758fb4229b7a8bcb', 'public/fonts/titillium-web-latin-700-normal.woff2': '9e3162d81ed6681322ab34791660f1b45c79945197e7a7dbb217005b2926caf4'}
-BASELINES = {'server.js': ['207887092ef65d5196628e5ab3054c2cf23fd46067dcf1d38904f4320de65956', '31c6972bd7bde25b7b1672e4f1b9e6736febb3eb565bf97cb7dbe762db386cb8', 'd5d65bfbd1ed0e237ba360f1ba6f35e0cd138f9c0e86808c6cac2aa58d6c3955'], 'public/app.js': ['ed3348fbdfdd11f5f98ad5f46003a8425f81de2a7ec0dc94330e8f95088911a3']}
+RELEASE_REF = "43b5f88d2e97954d4295d6f57a7651e29ac7ae04"
+FILES = {'server.js': '481ee0a3bb7e8ce5ad175d9dc1a110ffcc9519361a6aec67504f5e0a0408400e', 'public/app.js': '21d113b185193de42a902614b0e21453027834e7777f9e281e1f38ffb0459f0f', 'public/index.html': 'ad912204504546c2e62eaec76499e90b7ac5d66f61a487e3ef251ecb02a2d4ff', 'public/styles.css': '3c79e4d95788bfd96de6a223d39444530443ce68e30a2a965daa5680d9d273f9', 'public/sw.js': '8aee3eee9446671356ee24bea2f19fdff576843a907757cdf61449bdb45865cb', 'package.json': 'acbe1814c65bcdee775a1073b0ce0e9d413cb9597a4123959e0e10129d843530', 'package-lock.json': '2f0533bd0357e477fc9664516390db7f6c333490572ecfc2419c67b56e2cc054', '.env.example': 'b45155aa005a3f2d80e79e4963ed41ddba05a46536173c857e90b527eaff09cf', 'README.md': '9365bb902cd6e981db57e43d4a7b55b32d32c83af50c2dccd7522d7aecdad971', 'test/basic.test.js': 'db71970bb082ceede5e9d734fa7f0913fc6644178bdb2dcbd3d60f1770381b6d', 'test/hardening.test.js': '67dac5dc16982f8629dbd973198be164143d14af3f5123460735afb7287201a3', 'public/manifest.json': 'c54e1b7635e951945203d3ee4a59285b94785719af98d01f374df26518cdd8e4', 'third_party/Titillium-Web-OFL.txt': '74a09413ee50672765c52b8356bc03b68b274bc926888b37bb9092c8dcba09fd', 'public/fonts/titillium-web-latin-300-normal.woff2': 'b6287de6fc5553c57520eedd963a16b66f3c192a2c65916243a0a92a8e0e8a8f', 'public/fonts/titillium-web-latin-400-normal.woff2': '861b80b49d2a634d8746e2e45c672309d9ba69a2fdd95da2af034d7a1d09b3f9', 'public/fonts/titillium-web-latin-600-normal.woff2': 'f356ff5613e1b6789a47ae3bd6b72fa6fb61d44493811bcb758fb4229b7a8bcb', 'public/fonts/titillium-web-latin-700-normal.woff2': '9e3162d81ed6681322ab34791660f1b45c79945197e7a7dbb217005b2926caf4'}
+BASELINES = {'server.js': ['1af9e47d155f0e9d6e5e6da6b3b45ba33f8955f26e178568d9b501389ab4ed7e', '207887092ef65d5196628e5ab3054c2cf23fd46067dcf1d38904f4320de65956', '31c6972bd7bde25b7b1672e4f1b9e6736febb3eb565bf97cb7dbe762db386cb8', '56b2a726504bf50bd40fead92508ecccd9e24ba4c60fd70445e83ef25d4225bd', 'd5d65bfbd1ed0e237ba360f1ba6f35e0cd138f9c0e86808c6cac2aa58d6c3955'], 'public/app.js': ['5bcf913d801d9e1e92163a3cdbd35ac4af3542553d591f390837329a6672d544', '7a85f37d6a8820294e85bb568af46079c2b0dea9a9209351a94a278a4e45b473', 'ed3348fbdfdd11f5f98ad5f46003a8425f81de2a7ec0dc94330e8f95088911a3']}
 SERVICE = "gafchat.service"
 
 def run(args,**kwargs):
@@ -46,9 +46,10 @@ def healthy(url,version):
 
 def baseline(app):
     version=json.loads((app/"package.json").read_text()).get("version")
-    if version!="0.5.2":raise RuntimeError(f"Expected v0.5.2, found {version}. No files changed.")
+    if version not in ["0.5.2","0.5.3"]:raise RuntimeError(f"Expected reviewed v0.5.2 or v0.5.3, found {version}. No files changed.")
     for relative,allowed in BASELINES.items():
         if digest(app/relative) not in allowed:raise RuntimeError(f"{relative} differs from the reviewed build. No files changed.")
+    return version
 
 def effective_origin(values,app):
     value=values.get("PUBLIC_ORIGIN")
@@ -74,6 +75,23 @@ def browser_assets_healthy(health_url,origin):
         except Exception:return False
     return True
 
+def invite_policy_healthy(health_url):
+    base=urlsplit(health_url);origin=base.scheme+"://"+base.netloc
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self,*args,**kwargs):return None
+    try:
+        urllib.request.build_opener(NoRedirect).open(origin+"/",timeout=3)
+        return False
+    except urllib.error.HTTPError as error:
+        if error.code!=302 or error.headers.get("Location")!="https://gaf.nyc/":return False
+    except Exception:return False
+    request=urllib.request.Request(origin+"/api/room-request",method="POST",headers={"Content-Type":"application/json"},data=b'{"name":"Health check"}')
+    try:
+        urllib.request.urlopen(request,timeout=3)
+        return False
+    except urllib.error.HTTPError as error:return error.code==410
+    except Exception:return False
+
 def sandbox(state_dirs,public_origin=None):
     # Writable exceptions contain private state only; application code stays read-only.
     paths=" ".join('"'+str(p).replace("%","%%")+'"' for p in state_dirs)
@@ -97,6 +115,7 @@ ReadWritePaths={paths}
 LimitNOFILE=1024
 TasksMax=64
 MemoryMax=1G
+Environment="GUEST_REDIRECT_URL=https://gaf.nyc/"
 """
 
 def runtime_state(pid,app):
@@ -122,7 +141,7 @@ print(json.dumps(values))
         dirs.add(file.parent)
     return sorted(dirs),effective_origin(values,app)
 
-def apply_release(app,payload,backup,node,dropin,dropin_text,health_url,public_origin=None):
+def apply_release(app,payload,backup,node,dropin,dropin_text,health_url,public_origin=None,previous_version="0.5.2"):
     records={};applied=False
     for relative in FILES:
         target=app/relative
@@ -149,8 +168,9 @@ def apply_release(app,payload,backup,node,dropin,dropin_text,health_url,public_o
         install_file(backup/"new-hardening.conf",dropin,0,0,0o644)
         run(["sudo","systemctl","daemon-reload"])
         run(["sudo","systemctl","restart",SERVICE])
-        if not healthy(health_url,"0.5.3"):raise RuntimeError("The hardened service did not pass its health check")
+        if not healthy(health_url,"0.5.4"):raise RuntimeError("The hardened service did not pass its health check")
         if public_origin and not browser_assets_healthy(health_url,public_origin):raise RuntimeError("Browser-origin asset checks failed")
+        if public_origin and not invite_policy_healthy(health_url):raise RuntimeError("Guest redirect or invitation policy check failed")
         if output(["systemctl","is-active",SERVICE])!="active":raise RuntimeError("The service is not active")
     except BaseException:
         if applied:
@@ -167,7 +187,7 @@ def apply_release(app,payload,backup,node,dropin,dropin_text,health_url,public_o
                 else:run(["sudo","rm","-f",dropin])
                 run(["sudo","systemctl","daemon-reload"])
                 run(["sudo","systemctl","restart",SERVICE])
-                if not healthy(health_url,"0.5.2"):raise RuntimeError("Previous service did not recover")
+                if not healthy(health_url,previous_version):raise RuntimeError("Previous service did not recover")
                 print("Previous build restored and healthy.",flush=True)
             except BaseException:
                 print(f"Automatic rollback could not finish. Backups: {backup}",file=sys.stderr,flush=True)
@@ -184,7 +204,7 @@ def main():
     os.umask(0o077)
     app=(args.app_dir or pathlib.Path(output(["systemctl","show","-p","WorkingDirectory","--value",SERVICE]))).resolve()
     if not (app/"server.js").is_file():raise RuntimeError("GafChat application directory not found")
-    baseline(app)
+    previous_version=baseline(app)
     if args.check_only:
         node=args.node or shutil.which("node");state_dirs=[]
     else:
@@ -195,7 +215,7 @@ def main():
         pid=output(["systemctl","show","-p","MainPID","--value",SERVICE])
         node=args.node or output(["sudo","readlink","-f",f"/proc/{pid}/exe"])
         state_dirs,public_origin=runtime_state(pid,app)
-        if not healthy("http://127.0.0.1:8787/api/health","0.5.2"):raise RuntimeError("The current service did not pass its pre-upgrade health check")
+        if not healthy("http://127.0.0.1:8787/api/health",previous_version):raise RuntimeError("The current service did not pass its pre-upgrade health check")
     major=int(output([node,"-p","process.versions.node.split('.')[0]"]))
     if major<22:raise RuntimeError("Node 22 or newer is required")
     with tempfile.TemporaryDirectory(prefix="gafchat-harden-") as temporary:
@@ -215,8 +235,8 @@ def main():
         if stat.S_IMODE(parent.stat().st_mode)&0o077:raise RuntimeError("Backup directory must be private (mode 700)")
         backup=pathlib.Path(tempfile.mkdtemp(prefix=time.strftime("hardening-%Y%m%d-%H%M%S-"),dir=parent))
         dropin=pathlib.Path("/etc/systemd/system/gafchat.service.d/40-hardening.conf")
-        apply_release(app,stage,backup,node,dropin,sandbox(state_dirs,public_origin),"http://127.0.0.1:8787/api/health",public_origin=public_origin)
-        print(f"ALL CLEAR: GafChat v0.5.3 is running. Backup: {backup}")
+        apply_release(app,stage,backup,node,dropin,sandbox(state_dirs,public_origin),"http://127.0.0.1:8787/api/health",public_origin=public_origin,previous_version=previous_version)
+        print(f"ALL CLEAR: GafChat v0.5.4 is running. Backup: {backup}")
         print("Close and reopen GafChat on each device. Open rooms ended during the restart.")
 
 if __name__=="__main__":
