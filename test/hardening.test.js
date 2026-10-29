@@ -18,7 +18,7 @@ async function fixture(t,settings={}){
   const dir=await mkdtemp(path.join(tmpdir(),"gafchat-test-"));
   const child=spawn(process.execPath,["server.js"],{
     cwd:root,env:{PATH:process.env.PATH,PORT:"0",HOST_PASSWORD:"test-only-password",HOST_AUTH_SECRET:secret,
-      PUBLIC_ORIGIN:origin,TRUST_DB:path.join(dir,"trusted.json"),HOST_PUSH_FILE:path.join(dir,"push.json"),...settings},
+      PUBLIC_ORIGIN:origin,GUEST_REDIRECT_URL:"https://gaf.nyc/",TRUST_DB:path.join(dir,"trusted.json"),HOST_PUSH_FILE:path.join(dir,"push.json"),...settings},
     stdio:["ignore","pipe","pipe"]
   });
   let logs="";child.stderr.on("data",b=>{logs+=b});
@@ -136,7 +136,7 @@ test("private state writes are 0600 and only packaged assets are served",async t
   assert.deepEqual(JSON.parse(await readFile(path.join(f.dir,"push.json"),"utf8")),[]);
   for(const file of ["/server.js","/app.next.js","/index.html.before-test","/.env"]){assert.equal((await f.request(file)).status,404)}
   const font=await f.request("/fonts/titillium-web-latin-400-normal.woff2");assert.equal(font.status,200);
-  const page=await f.request("/");assert.equal(page.data.includes("fonts.googleapis.com"),false);
+  const page=await f.request("/host");assert.equal(page.data.includes("fonts.googleapis.com"),false);
   assert.match(page.headers.get("content-security-policy"),/default-src 'none'/);
   assert.equal(page.headers.get("referrer-policy"),"no-referrer");
 });
@@ -153,11 +153,31 @@ test("trusted-device enrollment expires, and host revocation blocks future acces
   assert.equal((await f.request("/api/trust/status",{headers:{Cookie:cookie}})).data.trusted,true);
   assert.equal((await f.request("/api/rooms",{body:{name:"Trusted guest"},headers:{Cookie:cookie}})).status,403);
   const room=await f.owner();
-  assert.equal((await f.request(`/api/rooms/${room.room}/join`,{body:{name:"Trusted guest"},headers:{Cookie:cookie}})).status,200);
+  assert.equal((await f.request(`/api/rooms/${room.room}/join`,{body:{name:"Trusted guest",inviteToken:room.inviteToken},headers:{Cookie:cookie}})).status,200);
+  assert.equal((await f.request(`/api/rooms/${room.room}/join`,{body:{name:"Trusted guest"},headers:{Cookie:cookie}})).status,403);
   const listed=await f.request("/api/trust/devices",{headers:{Cookie:f.cookie}});
   assert.equal(listed.data.devices.length,1);assert.equal("tokenHash" in listed.data.devices[0],false);
   assert.equal((await f.request("/api/trust/revoke",{body:{id:listed.data.devices[0].id},headers:{Cookie:cookie}})).status,403);
   assert.equal((await f.request("/api/trust/revoke",{body:{id:listed.data.devices[0].id},headers:{Cookie:f.cookie}})).status,200);
   assert.equal((await f.request("/api/trust/status",{headers:{Cookie:cookie}})).data.trusted,false);
   assert.equal((await f.request("/api/rooms",{body:{name:"Revoked"},headers:{Cookie:cookie}})).status,403);
+});
+
+
+test("guests cannot enter an approval queue or bypass an invite",async t=>{
+  const f=await fixture(t),room=await f.owner();
+  assert.equal((await f.request("/api/room-request",{body:{name:"Visitor"}})).status,410);
+  assert.equal((await f.request(`/api/rooms/${room.room}/join`,{body:{name:"Visitor"}})).status,403);
+  assert.equal((await f.request(`/api/rooms/${room.room}/join`,{body:{name:"Visitor",inviteToken:"wrong"}})).status,403);
+  assert.equal((await f.request(`/api/rooms/${room.room}/approve`,{body:{token:room.token}})).status,410);
+  const joined=await f.join(room);assert.ok(joined.token);
+  const page=await f.request("/host");assert.equal(page.data.includes("WAITING FOR APPROVAL"),false);assert.equal(page.data.includes("CHAT WITH GAF</button>"),false);
+});
+
+
+test("homepage redirects visitors to gaf.nyc and authenticated Hosts to their dashboard",async t=>{
+  const f=await fixture(t);
+  const visitor=await fetch(f.base+"/",{redirect:"manual"});assert.equal(visitor.status,302);assert.equal(visitor.headers.get("location"),"https://gaf.nyc/");
+  const host=await fetch(f.base+"/",{redirect:"manual",headers:{Cookie:f.cookie}});assert.equal(host.status,302);assert.equal(host.headers.get("location"),"/host");
+  const other=await fetch(f.base+"/",{redirect:"manual",headers:{Origin:"https://other.example","Sec-Fetch-Site":"cross-site"}});assert.equal(other.status,302);
 });

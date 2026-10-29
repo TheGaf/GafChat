@@ -2,7 +2,7 @@
 
 Private, temporary, self-hosted encrypted chat.
 
-Current snapshot: **v0.5.3**, synced with the running installation on October 29, 2026.
+Current snapshot: **v0.5.4**, synced with the running installation on October 29, 2026.
 
 ## What it does
 
@@ -13,14 +13,12 @@ Current snapshot: **v0.5.3**, synced with the running installation on October 29
 - HEIC/HEIF photos are converted before encryption when the browser supports native decoding; otherwise the original is sent as an encrypted downloadable file.
 - The example configuration limits attachments to 25 MB per file and 100 MB total attachment cache per room.
 - Rooms, message history and encrypted attachments live in server memory and disappear on burn, expiry or server restart. Rooms have a six-hour absolute lifetime by default, including while connected.
-- Room owners can approve, deny and boot participants and can burn the room.
-- Only authenticated Host devices can create rooms. Trusted guests can join without repeated approval.
+- Room owners can remove participants and burn the room.
+- Only authenticated Host devices can create rooms. Guests need a valid full invitation; saved device trust never substitutes for an invite.
 - Social preview metadata and a 1200×630 share card are included.
-- Direct PWA push notifications alert the host to CHAT WITH GAF requests.
-- Host approval can create a room and optionally save the requester as trusted.
 - Secure invite tokens, typing indicators, encrypted emoji reactions and clickable links.
 - Installed PWA opens `/host`; host burn returns there, and guests can leave.
-- Mobile sizing and room controls retain the v0.5.2 layout. The host start card shows only the logo, name field and START A ROOM button.
+- Mobile sizing and room controls retain the v0.5.2 layout. The public homepage redirects unauthenticated visitors to the configured `GUEST_REDIRECT_URL` (`https://gaf.nyc/` on the original installation) and authenticated Hosts to `/host`. A full invitation opens its room directly as Guest. Guests are redirected to the same configured destination after leaving, burn or expiry. The portable default is `https://example.com/`; set your own destination before deployment. `/host` retains the authenticated host recovery/login gate. The old public chat-request/approval flow is disabled. Invalid or incomplete invitations show an error rather than entering an approval queue. The host start card shows only the logo, name field and START A ROOM button.
 
 ## Quick start
 
@@ -94,7 +92,7 @@ Trusted-device credentials are stored in an HttpOnly browser cookie. The server 
 
 A Host can issue a one-time trust enrollment link. Opening it binds that browser as a trusted device.
 
-A trusted guest device can join rooms without waiting for owner approval. It cannot create rooms, see the authenticated Host start card or issue new trusted-person invitations. Creating a room requires a valid Host login, enforced by both the browser controls and the API.
+A guest with a valid invitation enters directly as Guest, without a name form, approval request or waiting screen. Saved device trust alone does not grant room access. It cannot create rooms, see the authenticated Host start card or issue new trusted-person invitations. Creating a room requires a valid Host login, enforced by both the browser controls and the API.
 
 Clearing browser site data or moving to another browser/device requires enrollment again.
 
@@ -150,7 +148,7 @@ Hosts can inspect trusted-device IDs with `GET /api/trust/devices` and revoke on
 
 ### Upgrading the existing GafCloud installation
 
-The repository's `scripts/harden-live.py` is a pinned, checksum-verified installer for the reviewed v0.5.2 installation. It downloads the release, checks the baseline, stages and tests it, backs up replaced files, installs a systemd sandbox, restarts the service and verifies health. If deployment or health checks fail, it attempts to restore the previous files and systemd configuration and checks recovery. It never copies or uploads `.env`, trusted-device records or push subscriptions. A backup is not a guarantee against power loss or an uncatchable process kill.
+The repository's `scripts/harden-live.py` is a pinned, checksum-verified installer for reviewed v0.5.2 and v0.5.3 installations. It downloads the release, checks the baseline, stages and tests it, backs up replaced files, installs a systemd sandbox, restarts the service and verifies health. If deployment or health checks fail, it attempts to restore the previous files and systemd configuration and checks recovery. It never copies or uploads `.env`, trusted-device records or push subscriptions. A backup is not a guarantee against power loss or an uncatchable process kill.
 
 The installer requires a running `gafchat.service`, a dedicated non-root service account, Node 22+, existing dependencies, and `TRUST_DB`/`HOST_PUSH_FILE` outside the application directory. This deployment uses localhost port 8787. It preserves environment values and trusted-device records. Any open rooms end during the restart. The systemd sandbox makes application code read-only, permits writes only to existing private state directories and private temporary storage, drops capabilities and limits the service to 1 GB of memory.
 

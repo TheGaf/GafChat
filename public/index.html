@@ -42,8 +42,9 @@
       </section>
 
       <section id="guestCard" class="compact-card">
-        <input id="guestName" maxlength="32" autocomplete="nickname" placeholder="Your name">
-        <button id="requestRoom" class="primary">CHAT WITH GAF</button>
+        <input id="guestName" maxlength="32" value="Guest" class="hidden">
+        <button id="requestRoom" class="primary hidden">ENTER CHAT</button>
+        <p id="inviteHint">Open an invite link from the room owner to join.</p>
       </section>
 
       <section id="hostGate" class="compact-card hidden">
@@ -57,18 +58,6 @@
       </section>
 
       <div id="landingError" class="error"></div>
-    </div>
-  </section>
-
-  <section id="waiting" class="screen waiting hidden">
-    <div class="shell">
-      <img class="logo small-logo" src="/gafchat-logo.png" alt="GafChat">
-      <div class="compact-card waiting-card">
-        <h2>WAITING FOR APPROVAL</h2>
-        <p>The room owner has your request.</p>
-        <div class="spinner"></div>
-        <button id="cancelWait">CANCEL</button>
-      </div>
     </div>
   </section>
 
@@ -114,7 +103,7 @@
     <div class="modal-actions"><button id="cancelBurn">CANCEL</button><button id="confirmBurn" class="burn-btn">BURN ROOM</button></div>
   </div></div>
 </main>
-<script type="module" src="/app.js?v=054"></script>
+<script type="module" src="/app.js?v=055"></script>
 </body>
 </html>
 

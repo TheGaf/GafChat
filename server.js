@@ -43,6 +43,8 @@ function requestIp(req){
   return String(local?(req.headers["cf-connecting-ip"]||req.headers["x-forwarded-for"]?.split(",")[0]||peer):peer).trim().slice(0,80);
 }
 function bearer(req){return String(req.headers.authorization||"").replace(/^Bearer\s+/i,"")}
+const GUEST_REDIRECT_URL=new URL(process.env.GUEST_REDIRECT_URL||"https://example.com/").href;
+if(!/^https?:/.test(GUEST_REDIRECT_URL))throw new Error("Invalid GUEST_REDIRECT_URL");
 const HOST_COOKIE = "gafchat_host";
 const HOST_MAX_AGE = setting("HOST_SESSION_DAYS",30,1,90)*86400;
 
@@ -391,16 +393,21 @@ const server = http.createServer(async (req,res)=>{
 
   try {
     const url = new URL(req.url, PUBLIC_ORIGIN);
+    if(req.method==="GET"&&(url.pathname==="/"||url.pathname==="/leave")){
+      res.writeHead(302,{...headers(),"Cache-Control":"no-store","Location":url.pathname==="/"&&isHost(req)?"/host":GUEST_REDIRECT_URL});res.end();return;
+    }
     if(!allowedOrigin(req)||req.headers["sec-fetch-site"]==="cross-site")return json(res,403,{ok:false,error:"Origin denied."});
     if(["POST","PUT","PATCH","DELETE"].includes(req.method)&&url.pathname.startsWith("/api/")){
       const upload=/^\/api\/rooms\/[A-Z0-9]{6}\/attachments$/i.test(url.pathname)&&req.method==="POST";
       const type=String(req.headers["content-type"]||"").split(";")[0].trim();
       if(req.method!=="DELETE"&&type!==(upload?"application/octet-stream":"application/json"))return json(res,415,{ok:false,error:"Unsupported content type."});
     }
+    if(url.pathname==="/api/room-request"||url.pathname.startsWith("/api/room-request/")||/^\/api\/rooms\/[A-Z0-9]{6}\/(?:requests\/|approve$)/i.test(url.pathname))
+      return json(res,410,{ok:false,error:"Open a valid invite link to join a room."});
     const sensitive=["/api/host/login","/api/host/approval/start","/api/room-request","/api/trust/enroll"].includes(url.pathname)&&req.method==="POST";
     if(sensitive&&!rate(`sensitive:${ip}`,10,600000))return json(res,429,{ok:false,error:"Please wait before trying again."});
 
-    if(req.method==="GET" && url.pathname==="/api/health") return json(res,200,{ok:true,version:"0.5.3",rooms:rooms.size});
+    if(req.method==="GET" && url.pathname==="/api/health") return json(res,200,{ok:true,version:"0.5.4",rooms:rooms.size});
 
     if(req.method==="GET" && url.pathname==="/api/host/status"){
       const host=isHost(req);
@@ -794,7 +801,7 @@ const server = http.createServer(async (req,res)=>{
       const invited=Boolean(body.inviteToken && tokenMatches(room.inviteHash,body.inviteToken));
 
       if(room.members.size>=MAX_MEMBERS)return json(res,429,{ok:false,error:"Room is full."});
-      if(trusted || invited){
+      if(invited){
         const token=rid(),member={id:rid(10),name,owner:false};
         room.members.set(member.id,{...member,tokenHash:sha(token)});
         room.touchedAt=now();
@@ -802,16 +809,7 @@ const server = http.createServer(async (req,res)=>{
         return json(res,200,{ok:true,status:"approved",token,member,trusted:Boolean(trusted),invited});
       }
 
-      if(room.pending.size+room.approvals.size>=20)return json(res,429,{ok:false,error:"Too many requests."});
-      const requestId=rid(12), claim=rid();
-      room.pending.set(requestId,{id:requestId,name,claimHash:sha(claim),expiresAt:now()+600000});
-      room.touchedAt=now();
-
-      for(const ws of room.clients)
-        if(ws.memberId===room.ownerId)
-          send(ws,{type:"join_request",request:{id:requestId,name}});
-
-      return json(res,202,{ok:true,status:"pending",requestId,claimToken:claim});
+      return json(res,403,{ok:false,error:"This invite is invalid or incomplete. Ask for a fresh invite link."});
     }
 
     m = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]{6})\/requests\/([^/]+)$/i);
@@ -1032,4 +1030,4 @@ setInterval(()=>{
   for(let i=roomRequests.length-1;i>=0;i--)if(roomRequests[i].expiresAt<t||roomRequests[i].status==="consumed")roomRequests.splice(i,1);
   for(const [key,b] of buckets)if(t-b.start>b.window)buckets.delete(key);
 },1000).unref();
-server.listen(PORT,BIND_HOST,()=>console.log(`GafChat v0.5.3 listening on http://${BIND_HOST}:${server.address().port}`));
+server.listen(PORT,BIND_HOST,()=>console.log(`GafChat v0.5.4 listening on http://${BIND_HOST}:${server.address().port}`));

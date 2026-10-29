@@ -1,7 +1,7 @@
 const $=s=>document.querySelector(s);
-const el={landing:$("#landing"),waiting:$("#waiting"),chat:$("#chat"),hostCard:$("#hostCard"),guestCard:$("#guestCard"),hostGate:$("#hostGate"),hostRequestsWrap:$("#hostRequestsWrap"),hostRequestsList:$("#hostRequestsList"),hostName:$("#hostName"),guestName:$("#guestName"),joinCode:null,startRoom:$("#startRoom"),enablePush:$("#enablePush"),joinRoom:null,requestRoom:$("#requestRoom"),confirmOnGafBox:$("#confirmOnGafBox"),approvalState:$("#approvalState"),recoveryToggle:$("#recoveryToggle"),recoveryWrap:$("#recoveryWrap"),hostPassword:$("#hostPassword"),confirmHost:$("#confirmHost"),landingError:$("#landingError"),cancelWait:$("#cancelWait"),roomLabel:$("#roomLabel"),inviteBtn:$("#inviteBtn"),peopleBtn:$("#peopleBtn"),peopleBadge:$("#peopleBadge"),leaveBtn:$("#leaveBtn"),burnBtn:$("#burnBtn"),alertBar:$("#alertBar"),alertText:$("#alertText"),reviewBtn:$("#reviewBtn"),peoplePanel:$("#peoplePanel"),closePeople:$("#closePeople"),pendingWrap:$("#pendingWrap"),pendingList:$("#pendingList"),noticeWrap:$("#noticeWrap"),noticeList:$("#noticeList"),memberList:$("#memberList"),messages:$("#messages"),composer:$("#composer"),messageInput:$("#messageInput"),toast:$("#toast"),burnModal:$("#burnModal"),cancelBurn:$("#cancelBurn"),confirmBurn:$("#confirmBurn"),attachBtn:$("#attachBtn"),fileInput:$("#fileInput")};
+const el={landing:$("#landing"),chat:$("#chat"),hostCard:$("#hostCard"),guestCard:$("#guestCard"),hostGate:$("#hostGate"),hostRequestsWrap:$("#hostRequestsWrap"),hostRequestsList:$("#hostRequestsList"),hostName:$("#hostName"),guestName:$("#guestName"),joinCode:null,startRoom:$("#startRoom"),enablePush:$("#enablePush"),joinRoom:null,requestRoom:$("#requestRoom"),confirmOnGafBox:$("#confirmOnGafBox"),approvalState:$("#approvalState"),recoveryToggle:$("#recoveryToggle"),recoveryWrap:$("#recoveryWrap"),hostPassword:$("#hostPassword"),confirmHost:$("#confirmHost"),landingError:$("#landingError"),roomLabel:$("#roomLabel"),inviteBtn:$("#inviteBtn"),peopleBtn:$("#peopleBtn"),peopleBadge:$("#peopleBadge"),leaveBtn:$("#leaveBtn"),burnBtn:$("#burnBtn"),alertBar:$("#alertBar"),alertText:$("#alertText"),reviewBtn:$("#reviewBtn"),peoplePanel:$("#peoplePanel"),closePeople:$("#closePeople"),pendingWrap:$("#pendingWrap"),pendingList:$("#pendingList"),noticeWrap:$("#noticeWrap"),noticeList:$("#noticeList"),memberList:$("#memberList"),messages:$("#messages"),composer:$("#composer"),messageInput:$("#messageInput"),toast:$("#toast"),burnModal:$("#burnModal"),cancelBurn:$("#cancelBurn"),confirmBurn:$("#confirmBurn"),attachBtn:$("#attachBtn"),fileInput:$("#fileInput")};
 const state={generation:0,room:"",token:"",member:null,keyString:"",key:null,ws:null,members:[],pending:[],notices:[],createdAt:null,waitAbort:null,suppressReconnect:false,host:false,trusted:false,approvalConfigured:false,hostApprovalAbort:null,objectUrls:[],inviteRoom:"",inviteToken:"",typing:new Map(),typingTimer:null,reactions:new Map()};
-function show(which){[el.landing,el.waiting,el.chat].forEach(x=>x.classList.add("hidden"));el[which].classList.remove("hidden")}
+function show(which){[el.landing,el.chat].forEach(x=>x.classList.add("hidden"));el[which].classList.remove("hidden")}
 function err(t=""){el.landingError.textContent=t}
 function toast(t){el.toast.textContent=t;el.toast.classList.remove("hidden");clearTimeout(toast._t);toast._t=setTimeout(()=>el.toast.classList.add("hidden"),1800)}
 async function api(path,options={}){const res=await fetch(path,{cache:"no-store",headers:{"Content-Type":"application/json",...(options.headers||{})},...options});const data=await res.json().catch(()=>({error:"Bad server response."}));if(!res.ok)throw new Error(data.error||`Request failed (${res.status})`);return data}
@@ -66,30 +66,42 @@ function reset(){
   Object.assign(state,{room:"",token:"",member:null,keyString:"",key:null,ws:null,members:[],pending:[],notices:[],createdAt:null,inviteRoom:"",inviteToken:"",waitAbort:null});
   el.messages.replaceChildren();el.memberList.replaceChildren();el.pendingList.replaceChildren();el.noticeList.replaceChildren();
   el.peoplePanel.classList.add("hidden");el.burnModal.classList.add("hidden");clearUnread();
-  const route=location.pathname==="/host"?"/host":"/";history.replaceState(null,"",route);
+  const route=state.host?"/host":"/";history.replaceState(null,"",route);
+  if(!state.host){location.replace("/leave");return;}
   show("landing");refreshHost();
 }
 
 async function readInvite(){
-  const q=new URLSearchParams(location.search);
-  const hash=new URLSearchParams(location.hash.slice(1));
-  const pathRoom=(location.pathname.match(/^\/r\/([A-Z0-9]{6})$/i)||[])[1]||"";
-
-  const room=normalize(pathRoom||q.get("room"));
-  const key=hash.get("key")||"";
-  const inviteToken=hash.get("invite")||"";
-
-  if(room&&key&&inviteToken){
-    state.inviteRoom=room;
-    state.inviteToken=inviteToken;
-    sessionStorage.setItem(`gafchat_key_${room}`,key);
-    history.replaceState(null,"",location.pathname+location.search);
-
-    el.requestRoom.textContent="ENTER CHAT";
-    el.requestRoom.classList.add("primary");
-    el.guestName.focus();
+  const q=new URLSearchParams(location.search),hash=new URLSearchParams(location.hash.slice(1));
+  const room=normalize((location.pathname.match(/^\/r\/([A-Z0-9]{6})$/i)||[])[1]||q.get("room"));
+  let invite=null;
+  const key=hash.get("key")||"",token=hash.get("invite")||"";
+  if(room&&key&&token){
+    invite={room,key,token,at:Date.now()};
+    sessionStorage.setItem("gafchat_pending_invite",JSON.stringify(invite));
+  }else{
+    try{const saved=JSON.parse(sessionStorage.getItem("gafchat_pending_invite")||"null");if(saved?.room===room&&Date.now()-saved.at<900000)invite=saved}catch{}
   }
+  if(location.hash)history.replaceState(null,"",location.pathname+location.search);
+  if(!invite){
+    if(room){
+      const saved=JSON.parse(sessionStorage.getItem("gafchat_session")||"null");
+      if(saved?.room===room&&saved.token)return false;
+      err("This invite is incomplete. Ask for a fresh invite link.");return true;
+    }
+    return false;
+  }
+  try{
+    if(!/^[A-Z2-9]{6}$/.test(invite.room)||fromB64u(invite.key).length!==32||!/^[A-Za-z0-9_-]{40,64}$/.test(invite.token))throw new Error("Invalid invite");
+    state.inviteRoom=invite.room;state.inviteToken=invite.token;
+    sessionStorage.setItem(`gafchat_key_${invite.room}`,invite.key);
+    el.guestName.value="Guest";
+    $("#inviteHint").textContent="Joining your private room…";
+    await joinInvitedRoom();
+  }catch{sessionStorage.removeItem("gafchat_pending_invite");err("This invite is invalid. Ask for a fresh invite link.")}
+  return true;
 }
+
 async function restore(){let s;try{s=JSON.parse(sessionStorage.getItem("gafchat_session")||"null")}catch{return}if(!s?.room||!s?.token||!s?.member||!s?.keyString)return;if(!Number.isFinite(s.createdAt)||Date.now()-s.createdAt>=6*3600000){clearChatStorage();return;}Object.assign(state,s);state.key=await importKey(s.keyString);openChat()}
 
 
@@ -330,107 +342,14 @@ async function confirmOnGafBox(){
 }
 async function startRoom(){err();if(!state.host)return err("Host only.");const name=el.hostName.value.trim()||"Gaf";try{const d=await api("/api/rooms",{method:"POST",body:JSON.stringify({name})});state.room=d.room;state.token=d.token;state.member=d.member;state.createdAt=d.createdAt;state.inviteToken=d.inviteToken||"";state.keyString=b64u(rand(32));state.key=await importKey(state.keyString);save();openChat()}catch(e){err(e.message)}}
 async function requestRoom(){
-  const name=el.guestName.value.trim();
-
-  if(!name)return err("Enter your name.");
-
-  if(state.inviteRoom&&state.inviteToken){
-    return joinInvitedRoom();
-  }
-
-  try{
-    const keys=await makeChatKeyPair();
-
-    const d=await api("/api/room-request",{
-      method:"POST",
-      body:JSON.stringify({
-        name,
-        guestPub:keys.publicJwk
-      })
-    });
-
-    sessionStorage.setItem(
-      `gafchat_inbound_${d.id}`,
-      JSON.stringify({privateJwk:keys.privateJwk})
-    );
-
-    show("waiting");
-    waitInbound(d.id,d.claim);
-
-  }catch(e){
-    err(e.message);
-  }
-}
-
-async function waitInbound(id,claim){
-  state.waitAbort?.abort();
-
-  const controller=new AbortController();
-  state.waitAbort=controller;
-
-  try{
-    while(!controller.signal.aborted){
-      await sleep(1100,controller.signal);
-
-      const d=await api(
-        `/api/room-request/${encodeURIComponent(id)}?claim=${encodeURIComponent(claim)}`
-      );
-
-      if(d.status==="pending")continue;
-
-      if(d.status==="denied"){
-        sessionStorage.removeItem(`gafchat_inbound_${id}`);
-        show("landing");
-        err("Request declined.");
-        return;
-      }
-
-      if(d.status==="approved"){
-        const saved=JSON.parse(
-          sessionStorage.getItem(`gafchat_inbound_${id}`)||"null"
-        );
-
-        if(!saved?.privateJwk)
-          throw new Error("Secure chat key was lost.");
-
-        const keyString=await deriveChatKey(saved.privateJwk,d.hostPub);
-
-        if(d.trustToken){
-          try{
-            await api("/api/trust/enroll",{
-              method:"POST",
-              body:JSON.stringify({token:d.trustToken})
-            });
-          }catch{}
-        }
-
-        sessionStorage.removeItem(`gafchat_inbound_${id}`);
-
-        state.room=d.room;
-        state.token=d.token;
-        state.member=d.member;
-        state.createdAt=d.createdAt;
-        state.keyString=keyString;
-        state.key=await importKey(keyString);
-
-        save();
-        history.replaceState(null,"","/");
-        openChat();
-        return;
-      }
-    }
-  }catch(e){
-    if(e.name!=="AbortError"){
-      show("landing");
-      err(e.message);
-    }
-  }
+  if(state.inviteRoom&&state.inviteToken)return joinInvitedRoom();
+  err("Open an invite link from the room owner to join.");
 }
 
 async function joinInvitedRoom(){
   err();
 
-  const name=el.guestName.value.trim();
+  const name=el.guestName.value.trim()||"Guest";
   const room=state.inviteRoom;
   const inviteToken=state.inviteToken;
   const key=sessionStorage.getItem(`gafchat_key_${room}`)||"";
@@ -452,7 +371,10 @@ async function joinInvitedRoom(){
     state.token=d.token;
     state.member=d.member;
     state.keyString=key;
+    state.createdAt=d.createdAt||Date.now();
     state.key=await importKey(key);
+    sessionStorage.removeItem("gafchat_pending_invite");
+    sessionStorage.removeItem(`gafchat_key_${room}`);
 
     save();
     history.replaceState(null,"",`/r/${room}`);
@@ -927,7 +849,6 @@ el.confirmOnGafBox.onclick=confirmOnGafBox;
 el.recoveryToggle.onclick=()=>el.recoveryWrap.classList.toggle("hidden");
 el.confirmHost.onclick=hostLogin;
 el.hostPassword.addEventListener("keydown",e=>{if(e.key==="Enter")hostLogin()});
-el.cancelWait.onclick=()=>{state.waitAbort?.abort();show("landing")};
 el.inviteBtn.onclick=copyInvite;
 el.attachBtn.onclick=()=>el.fileInput.click();
 el.fileInput.onchange=()=>sendFiles([...el.fileInput.files]);
@@ -945,6 +866,7 @@ el.messageInput.addEventListener("input",()=>{
   clearTimeout(state.typingTimer);
   state.typingTimer=setTimeout(()=>sendTyping(false),1100);
 });
-readInvite();
-refreshHost();
-restore().catch(()=>{sessionStorage.removeItem("gafchat_session");show("landing")});
+(async()=>{
+  await refreshHost();
+  if(!(await readInvite()))await restore();
+})().catch(()=>{sessionStorage.removeItem("gafchat_session");show("landing");err("Could not open this chat. Ask for a fresh invite link.")});
