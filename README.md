@@ -14,7 +14,7 @@ Current snapshot: **v0.5.3**, synced with the running installation on October 29
 - The example configuration limits attachments to 25 MB per file and 100 MB total attachment cache per room.
 - Rooms, message history and encrypted attachments live in server memory and disappear on burn, expiry or server restart. Rooms have a six-hour absolute lifetime by default, including while connected.
 - Room owners can approve, deny and boot participants and can burn the room.
-- Trusted devices can create rooms and join without repeated approval while remaining separate from the system Host role.
+- Only authenticated Host devices can create rooms. Trusted guests can join without repeated approval.
 - Social preview metadata and a 1200×630 share card are included.
 - Direct PWA push notifications alert the host to CHAT WITH GAF requests.
 - Host approval can create a room and optionally save the requester as trusted.
@@ -94,7 +94,7 @@ Trusted-device credentials are stored in an HttpOnly browser cookie. The server 
 
 A Host can issue a one-time trust enrollment link. Opening it binds that browser as a trusted device.
 
-A trusted device can create its own rooms and join rooms without waiting for owner approval. It does **not** become the system Host and cannot issue new trusted-person invitations.
+A trusted guest device can join rooms without waiting for owner approval. It cannot create rooms, see the authenticated Host start card or issue new trusted-person invitations. Creating a room requires a valid Host login, enforced by both the browser controls and the API.
 
 Clearing browser site data or moving to another browser/device requires enrollment again.
 

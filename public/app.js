@@ -328,7 +328,7 @@ async function confirmOnGafBox(){
   }catch(e){if(e.name!=="AbortError")approvalMessage(e.message)}
   finally{el.confirmOnGafBox.disabled=false}
 }
-async function startRoom(){err();if(!(state.host||state.trusted))return err("Trusted device only.");const name=el.hostName.value.trim()||"Gaf";try{const d=await api("/api/rooms",{method:"POST",body:JSON.stringify({name})});state.room=d.room;state.token=d.token;state.member=d.member;state.createdAt=d.createdAt;state.inviteToken=d.inviteToken||"";state.keyString=b64u(rand(32));state.key=await importKey(state.keyString);save();openChat()}catch(e){err(e.message)}}
+async function startRoom(){err();if(!state.host)return err("Host only.");const name=el.hostName.value.trim()||"Gaf";try{const d=await api("/api/rooms",{method:"POST",body:JSON.stringify({name})});state.room=d.room;state.token=d.token;state.member=d.member;state.createdAt=d.createdAt;state.inviteToken=d.inviteToken||"";state.keyString=b64u(rand(32));state.key=await importKey(state.keyString);save();openChat()}catch(e){err(e.message)}}
 async function requestRoom(){
   const name=el.guestName.value.trim();
 

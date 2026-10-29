@@ -151,6 +151,9 @@ test("trusted-device enrollment expires, and host revocation blocks future acces
   assert.equal(enrolled.status,200);assert.match(enrolled.headers.get("set-cookie"),/Max-Age=7776000/);
   const cookie=enrolled.headers.get("set-cookie").split(";")[0];
   assert.equal((await f.request("/api/trust/status",{headers:{Cookie:cookie}})).data.trusted,true);
+  assert.equal((await f.request("/api/rooms",{body:{name:"Trusted guest"},headers:{Cookie:cookie}})).status,403);
+  const room=await f.owner();
+  assert.equal((await f.request(`/api/rooms/${room.room}/join`,{body:{name:"Trusted guest"},headers:{Cookie:cookie}})).status,200);
   const listed=await f.request("/api/trust/devices",{headers:{Cookie:f.cookie}});
   assert.equal(listed.data.devices.length,1);assert.equal("tokenHash" in listed.data.devices[0],false);
   assert.equal((await f.request("/api/trust/revoke",{body:{id:listed.data.devices[0].id},headers:{Cookie:cookie}})).status,403);

@@ -268,7 +268,7 @@ function trustedDevice(req){
 }
 
 function canCreateRoom(req){
-  return isHost(req)||Boolean(trustedDevice(req));
+  return isHost(req);
 }
 
 function onlineMembers(room){
@@ -766,7 +766,7 @@ const server = http.createServer(async (req,res)=>{
     }
 
     if(req.method==="POST" && url.pathname==="/api/rooms"){
-      if(!canCreateRoom(req)) return json(res,403,{ok:false,error:"Trusted device only."});
+      if(!canCreateRoom(req)) return json(res,403,{ok:false,error:"Host only."});
       const body = await readJson(req); const name = cleanName(body.name)||"Gaf";
       if(rooms.size>=MAX_ROOMS)return json(res,429,{ok:false,error:"Room limit reached."});
       let roomCode; do roomCode = code(); while(rooms.has(roomCode));
