@@ -1,3 +1,7 @@
+@font-face{font-family:'Titillium Web';font-style:normal;font-weight:300;font-display:swap;src:url('/fonts/titillium-web-latin-300-normal.woff2') format('woff2')}
+@font-face{font-family:'Titillium Web';font-style:normal;font-weight:400;font-display:swap;src:url('/fonts/titillium-web-latin-400-normal.woff2') format('woff2')}
+@font-face{font-family:'Titillium Web';font-style:normal;font-weight:600;font-display:swap;src:url('/fonts/titillium-web-latin-600-normal.woff2') format('woff2')}
+@font-face{font-family:'Titillium Web';font-style:normal;font-weight:700;font-display:swap;src:url('/fonts/titillium-web-latin-700-normal.woff2') format('woff2')}
 :root{color-scheme:dark;--bg:#121212;--panel:#191919;--line:#333;--white:#fff;--muted:#999;--cyan:#59DCFF;--pink:#FF33CC;--danger:#ff5a66}
 *{box-sizing:border-box}html,body,#app{margin:0;min-height:100%}body{margin:0;background:var(--bg);color:#fff;font-family:'Titillium Web',sans-serif;line-height:1.35}button,input,textarea{font:inherit}.hidden{display:none!important}.screen{min-height:100dvh}
 .landing,.waiting{display:grid;place-items:center;padding:22px}.shell{width:min(300px,calc(100vw - 36px));text-align:center}.logo{display:block;width:58px;height:58px;object-fit:contain;margin:0 auto 7px;border:1px solid #fff}.small-logo{width:52px;height:52px}.wordmark{font-size:24px;font-weight:700;margin:0 0 14px}.eyebrow{font-size:10px;letter-spacing:.14em;color:var(--cyan);font-weight:700;text-align:left}

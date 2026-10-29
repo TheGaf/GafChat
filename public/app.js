@@ -1,6 +1,6 @@
 const $=s=>document.querySelector(s);
 const el={landing:$("#landing"),waiting:$("#waiting"),chat:$("#chat"),hostCard:$("#hostCard"),guestCard:$("#guestCard"),hostGate:$("#hostGate"),hostRequestsWrap:$("#hostRequestsWrap"),hostRequestsList:$("#hostRequestsList"),hostName:$("#hostName"),guestName:$("#guestName"),joinCode:null,startRoom:$("#startRoom"),enablePush:$("#enablePush"),joinRoom:null,requestRoom:$("#requestRoom"),confirmOnGafBox:$("#confirmOnGafBox"),approvalState:$("#approvalState"),recoveryToggle:$("#recoveryToggle"),recoveryWrap:$("#recoveryWrap"),hostPassword:$("#hostPassword"),confirmHost:$("#confirmHost"),landingError:$("#landingError"),cancelWait:$("#cancelWait"),roomLabel:$("#roomLabel"),inviteBtn:$("#inviteBtn"),peopleBtn:$("#peopleBtn"),peopleBadge:$("#peopleBadge"),leaveBtn:$("#leaveBtn"),burnBtn:$("#burnBtn"),alertBar:$("#alertBar"),alertText:$("#alertText"),reviewBtn:$("#reviewBtn"),peoplePanel:$("#peoplePanel"),closePeople:$("#closePeople"),pendingWrap:$("#pendingWrap"),pendingList:$("#pendingList"),noticeWrap:$("#noticeWrap"),noticeList:$("#noticeList"),memberList:$("#memberList"),messages:$("#messages"),composer:$("#composer"),messageInput:$("#messageInput"),toast:$("#toast"),burnModal:$("#burnModal"),cancelBurn:$("#cancelBurn"),confirmBurn:$("#confirmBurn"),attachBtn:$("#attachBtn"),fileInput:$("#fileInput")};
-const state={room:"",token:"",member:null,keyString:"",key:null,ws:null,members:[],pending:[],notices:[],createdAt:null,waitAbort:null,suppressReconnect:false,host:false,trusted:false,approvalConfigured:false,hostApprovalAbort:null,objectUrls:[],inviteRoom:"",inviteToken:"",typing:new Map(),typingTimer:null,reactions:new Map()};
+const state={generation:0,room:"",token:"",member:null,keyString:"",key:null,ws:null,members:[],pending:[],notices:[],createdAt:null,waitAbort:null,suppressReconnect:false,host:false,trusted:false,approvalConfigured:false,hostApprovalAbort:null,objectUrls:[],inviteRoom:"",inviteToken:"",typing:new Map(),typingTimer:null,reactions:new Map()};
 function show(which){[el.landing,el.waiting,el.chat].forEach(x=>x.classList.add("hidden"));el[which].classList.remove("hidden")}
 function err(t=""){el.landingError.textContent=t}
 function toast(t){el.toast.textContent=t;el.toast.classList.remove("hidden");clearTimeout(toast._t);toast._t=setTimeout(()=>el.toast.classList.add("hidden"),1800)}
@@ -53,7 +53,23 @@ async function encryptBytes(buffer){const iv=rand(12);const out=await crypto.sub
 async function decryptBytes(buffer,iv){return crypto.subtle.decrypt({name:"AES-GCM",iv:fromB64u(iv)},state.key,buffer)}
 function clearObjectUrls(){for(const u of state.objectUrls)URL.revokeObjectURL(u);state.objectUrls=[]}
 function save(){sessionStorage.setItem("gafchat_session",JSON.stringify({room:state.room,token:state.token,member:state.member,keyString:state.keyString,createdAt:state.createdAt,inviteToken:state.inviteToken||""}))}
-function reset(){state.suppressReconnect=true;if(state.ws?.readyState===WebSocket.OPEN){try{state.ws.send(JSON.stringify({type:"leave"}))}catch{}}state.ws?.close(1000);sessionStorage.removeItem("gafchat_session");clearObjectUrls();Object.assign(state,{room:"",token:"",member:null,keyString:"",key:null,ws:null,members:[],pending:[],notices:[],createdAt:null});el.messages.replaceChildren();el.peoplePanel.classList.add("hidden");el.burnModal.classList.add("hidden");show("landing");refreshHost()}
+function clearChatStorage(){
+  for(let i=sessionStorage.length-1;i>=0;i--){const k=sessionStorage.key(i);if(k?.startsWith("gafchat_"))sessionStorage.removeItem(k)}
+}
+function reset(){
+  state.generation++;state.suppressReconnect=true;
+  state.waitAbort?.abort();clearTimeout(state.typingTimer);
+  if(state.ws?.readyState===WebSocket.OPEN){try{state.ws.send(JSON.stringify({type:"leave"}))}catch{}}
+  state.ws?.close(1000);clearChatStorage();clearObjectUrls();
+  for(const media of el.messages.querySelectorAll("video,audio")){media.pause();media.removeAttribute("src");media.load()}
+  el.messageInput.value="";el.fileInput.value="";state.typing.clear();state.reactions.clear();
+  Object.assign(state,{room:"",token:"",member:null,keyString:"",key:null,ws:null,members:[],pending:[],notices:[],createdAt:null,inviteRoom:"",inviteToken:"",waitAbort:null});
+  el.messages.replaceChildren();el.memberList.replaceChildren();el.pendingList.replaceChildren();el.noticeList.replaceChildren();
+  el.peoplePanel.classList.add("hidden");el.burnModal.classList.add("hidden");clearUnread();
+  const route=location.pathname==="/host"?"/host":"/";history.replaceState(null,"",route);
+  show("landing");refreshHost();
+}
+
 async function readInvite(){
   const q=new URLSearchParams(location.search);
   const hash=new URLSearchParams(location.hash.slice(1));
@@ -67,13 +83,14 @@ async function readInvite(){
     state.inviteRoom=room;
     state.inviteToken=inviteToken;
     sessionStorage.setItem(`gafchat_key_${room}`,key);
+    history.replaceState(null,"",location.pathname+location.search);
 
     el.requestRoom.textContent="ENTER CHAT";
     el.requestRoom.classList.add("primary");
     el.guestName.focus();
   }
 }
-async function restore(){let s;try{s=JSON.parse(sessionStorage.getItem("gafchat_session")||"null")}catch{return}if(!s?.room||!s?.token||!s?.member||!s?.keyString)return;Object.assign(state,s);state.key=await importKey(s.keyString);openChat()}
+async function restore(){let s;try{s=JSON.parse(sessionStorage.getItem("gafchat_session")||"null")}catch{return}if(!s?.room||!s?.token||!s?.member||!s?.keyString)return;if(!Number.isFinite(s.createdAt)||Date.now()-s.createdAt>=6*3600000){clearChatStorage();return;}Object.assign(state,s);state.key=await importKey(s.keyString);openChat()}
 
 
 function vapidBytes(value){
@@ -85,7 +102,7 @@ async function pushRegistration(){
     throw new Error("Push is not supported on this device.");
   }
 
-  await navigator.serviceWorker.register("/sw.js?v=1",{scope:"/"});
+  await navigator.serviceWorker.register("/sw.js?v=053",{scope:"/"});
   return navigator.serviceWorker.ready;
 }
 
@@ -499,8 +516,8 @@ function incomingAlert(sender,text){
 
     if("Notification" in window && Notification.permission==="granted"){
       try{
-        new Notification(sender?.name||"GafChat",{
-          body:String(text||"New message").slice(0,140),
+        new Notification("GafChat",{
+          body:"New encrypted message",
           tag:`gafchat-${state.room}`
         });
       }catch{}
@@ -570,19 +587,21 @@ function handleTyping(m){
   renderTyping();
 }
 
-function wsUrl(){const p=location.protocol==="https:"?"wss:":"ws:";return`${p}//${location.host}/ws?room=${encodeURIComponent(state.room)}&token=${encodeURIComponent(state.token)}`}
+function wsUrl(){const p=location.protocol==="https:"?"wss:":"ws:";return`${p}//${location.host}/ws?room=${encodeURIComponent(state.room)}`}
 function fmt(ts){return new Date(ts).toLocaleString([],{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"})}
-async function renderHistory(history){clearObjectUrls();state.reactions.clear();el.messages.replaceChildren();addSystem(`Room started · ${fmt(state.createdAt||Date.now())}`);for(const m of history||[]){try{if(m.type==="attachment"){await addAttachment(m.sender,m.attachment,m.sender.id===state.member?.id,m.id)}else if(m.type==="message"){const text=await decrypt(m.ciphertext,m.iv);addMessage(m.sender,text,m.sender.id===state.member?.id,m.id)}else if(m.type==="reaction"){await applyReaction(m)}}catch{addSystem("Could not decrypt an item.")}}}
+async function renderHistory(history){const generation=state.generation;clearObjectUrls();state.reactions.clear();el.messages.replaceChildren();addSystem(`Room started · ${fmt(state.createdAt||Date.now())}`);for(const m of history||[]){if(state.generation!==generation)return;try{if(m.type==="attachment"){await addAttachment(m.sender,m.attachment,m.sender.id===state.member?.id,m.id)}else if(m.type==="message"){const text=await decrypt(m.ciphertext,m.iv);if(state.generation!==generation)return;addMessage(m.sender,text,m.sender.id===state.member?.id,m.id)}else if(m.type==="reaction"){await applyReaction(m)}}catch{if(state.generation===generation)addSystem("Could not decrypt an item.")}}}
 async function roomStillExists(){
   if(!state.room||!state.token)return false;
-  try{await api(`/api/rooms/${state.room}/status?token=${encodeURIComponent(state.token)}`);return true}catch{return false}
+  try{await api(`/api/rooms/${state.room}/status`,{headers:{Authorization:`Bearer ${state.token}`}});return true}catch{return false}
 }
-function connect(){state.suppressReconnect=false;const ws=new WebSocket(wsUrl());state.ws=ws;ws.addEventListener("message",async ev=>{let m;try{m=JSON.parse(ev.data)}catch{return}if(m.type==="ready"){state.createdAt=m.createdAt||state.createdAt;state.members=m.members||[];state.pending=m.pending||[];state.notices=m.notices||[];save();renderPeople();renderRoomControls();await renderHistory(m.history||[]);return}if(m.type==="presence"){state.members=m.members||[];renderPeople();return}if(m.type==="typing"){handleTyping(m);return}if(m.type==="join_request"){if(state.member?.owner&&!state.pending.some(x=>x.id===m.request.id))state.pending.push(m.request);renderPeople();return}if(m.type==="notice"){if(state.member?.owner&&!state.notices.some(x=>x.id===m.notice.id))state.notices.push(m.notice);renderPeople();return}if(m.type==="booted"){state.suppressReconnect=true;alert("You were removed from this room.");reset();return}if(m.type==="burned"){state.suppressReconnect=true;alert("This room was burned.");reset();return}if(m.type==="reaction"){await applyReaction(m);return}if(m.type==="message"){try{const text=await decrypt(m.ciphertext,m.iv);const mine=m.sender.id===state.member?.id;state.typing.delete(m.sender.id);renderTyping();addMessage(m.sender,text,mine,m.id);if(!mine)incomingAlert(m.sender,text)}catch{addSystem("Could not decrypt a message.")};return}if(m.type==="attachment"){try{const mine=m.sender.id===state.member?.id;await addAttachment(m.sender,m.attachment,mine,m.id);if(!mine)incomingAlert(m.sender,"Sent an attachment")}catch{addSystem("Could not decrypt a file.")}}});ws.addEventListener("close",async e=>{if(state.suppressReconnect||state.ws!==ws||e.code===1000)return;if(!(await roomStillExists())){state.suppressReconnect=true;toast("Room is gone.");setTimeout(()=>reset(),500);return}setTimeout(()=>{if(!state.suppressReconnect&&!el.chat.classList.contains("hidden"))connect()},1000)})}
+function connect(){state.suppressReconnect=false;const ws=new WebSocket(wsUrl(),["gafchat",`auth.${state.token}`]);state.ws=ws;ws.addEventListener("message",async ev=>{if(state.ws!==ws||state.suppressReconnect)return;const generation=state.generation;let m;try{m=JSON.parse(ev.data)}catch{return}if(m.type==="ready"){state.createdAt=m.createdAt||state.createdAt;state.members=m.members||[];state.pending=m.pending||[];state.notices=m.notices||[];save();renderPeople();renderRoomControls();await renderHistory(m.history||[]);return}if(m.type==="presence"){state.members=m.members||[];renderPeople();return}if(m.type==="typing"){handleTyping(m);return}if(m.type==="join_request"){if(state.member?.owner&&!state.pending.some(x=>x.id===m.request.id))state.pending.push(m.request);renderPeople();return}if(m.type==="notice"){if(state.member?.owner&&!state.notices.some(x=>x.id===m.notice.id))state.notices.push(m.notice);renderPeople();return}if(m.type==="booted"){state.suppressReconnect=true;reset();toast("You were removed from this room.");return}if(m.type==="burned"){state.suppressReconnect=true;reset();toast("This room was burned or expired.");return}if(m.type==="reaction"){await applyReaction(m);return}if(m.type==="message"){try{const text=await decrypt(m.ciphertext,m.iv);if(state.generation!==generation)return;const mine=m.sender.id===state.member?.id;state.typing.delete(m.sender.id);renderTyping();addMessage(m.sender,text,mine,m.id);if(!mine)incomingAlert(m.sender,text)}catch{if(state.generation===generation)addSystem("Could not decrypt a message.")};return}if(m.type==="attachment"){try{const mine=m.sender.id===state.member?.id;await addAttachment(m.sender,m.attachment,mine,m.id);if(!mine)incomingAlert(m.sender,"Sent an attachment")}catch{if(state.generation===generation)addSystem("Could not decrypt a file.")}}});ws.addEventListener("close",async e=>{if(state.suppressReconnect||state.ws!==ws||e.code===1000)return;if(!(await roomStillExists())){reset();toast("Room is gone.");return}setTimeout(()=>{if(!state.suppressReconnect&&!el.chat.classList.contains("hidden"))connect()},1000)})}
 
 function humanBytes(n){if(n<1024)return`${n} B`;if(n<1024*1024)return`${(n/1024).toFixed(1)} KB`;return`${(n/1024/1024).toFixed(1)} MB`}
 async function fetchAttachment(att){const res=await fetch(`/api/rooms/${state.room}/attachments/${encodeURIComponent(att.id)}`,{cache:"no-store",headers:{Authorization:`Bearer ${state.token}`}});if(!res.ok)throw new Error("File unavailable");const encrypted=await res.arrayBuffer();return decryptBytes(encrypted,att.iv)}
 async function addAttachment(sender,att,mine,messageId){
+  const generation=state.generation;
   const meta=JSON.parse(await decrypt(att.metaCiphertext,att.metaIv));
+  if(state.generation!==generation)return;
   const row=document.createElement("div");
   row.className=`message-row ${mine?"mine":"theirs"}`;
 
@@ -609,6 +628,7 @@ async function addAttachment(sender,att,mine,messageId){
   scroll();
 
   const plain=await fetchAttachment(att);
+  if(state.generation!==generation)return;
   const blob=new Blob([plain],{type:meta.type||"application/octet-stream"});
   const url=URL.createObjectURL(blob);
   state.objectUrls.push(url);
@@ -670,25 +690,22 @@ async function normalizeUploadFile(file){
     return file;
   }
 
-  if(typeof window.heic2any!=="function"){
-    throw new Error("Photo converter failed to load.");
-  }
-
-  toast(`Converting ${file.name}`);
-
-  const result=await window.heic2any({
-    blob:file,
-    toType:"image/jpeg",
-    quality:0.92
-  });
-
-  const blob=Array.isArray(result)?result[0]:result;
-  const base=file.name.replace(/\.(heic|heif|jpe?g)$/i,"");
-
-  return new File([blob],`${base}.jpg`,{
-    type:"image/jpeg",
-    lastModified:file.lastModified
-  });
+  // Use the browser's native decoder; never relax CSP for a third-party codec.
+  const url=URL.createObjectURL(file);
+  try{
+    const img=new Image();img.src=url;await img.decode();
+    const canvas=document.createElement("canvas");canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;
+    if(!canvas.width||!canvas.height||canvas.width*canvas.height>40000000)throw new Error("Unsupported photo size");
+    canvas.getContext("2d").drawImage(img,0,0);
+    const blob=await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",0.92));
+    canvas.width=canvas.height=0;
+    if(!blob)throw new Error("Conversion unavailable");
+    const base=file.name.replace(/\.(heic|heif|jpe?g)$/i,"");
+    return new File([blob],`${base}.jpg`,{type:"image/jpeg",lastModified:file.lastModified});
+  }catch{
+    // Preserve the original as an encrypted downloadable file on other browsers.
+    return new File([file],file.name,{type:"application/octet-stream",lastModified:file.lastModified});
+  }finally{URL.revokeObjectURL(url)}
 }
 
 async function sendFiles(files){if(!files?.length||state.ws?.readyState!==WebSocket.OPEN)return;for(const originalFile of files){let file=originalFile;try{if(file.size>100*1024*1024){toast(`${file.name}: max 100 MB`);continue}file=await normalizeUploadFile(file);if(file.size>100*1024*1024){toast(`${file.name}: max 100 MB`);continue}toast(`Uploading ${file.name}`);const ext=(file.name.split(".").pop()||"").toLowerCase();
@@ -723,8 +740,10 @@ async function sendReaction(messageId,emoji){
 }
 
 async function applyReaction(m){
+  const generation=state.generation;
   try{
     const payload=JSON.parse(await decrypt(m.ciphertext,m.iv));
+    if(state.generation!==generation)return;
     const map=reactionMap(m.targetId);
 
     if(payload.emoji){
@@ -853,32 +872,6 @@ function richText(container,text){
 
     container.append(link);
 
-    const isGif=/\.gif(?:$|[?#])/i.test(url.pathname+url.search);
-
-    if(isGif){
-      const load=document.createElement("button");
-      load.type="button";
-      load.className="load-gif";
-      load.textContent="LOAD GIF";
-
-      load.onclick=()=>{
-        const img=document.createElement("img");
-        img.className="remote-gif";
-        img.src=url.href;
-        img.alt="GIF";
-        img.referrerPolicy="no-referrer";
-
-        img.onerror=()=>{
-          img.replaceWith(document.createTextNode("GIF unavailable"));
-        };
-
-        load.replaceWith(img);
-        scroll();
-      };
-
-      container.append(document.createElement("br"),load);
-    }
-
     last=start+raw.length;
   }
 
@@ -895,7 +888,7 @@ function renderRoomControls(){
 }
 
 function renderPeople(){el.memberList.replaceChildren();for(const m of state.members){const row=document.createElement("div");row.className="person";const name=document.createElement("span");name.textContent=`${m.name}${m.owner?" · owner":""}${m.id===state.member?.id?" · you":""}`;row.appendChild(name);if(state.member?.owner&&!m.owner){const a=document.createElement("div");a.className="actions";const boot=document.createElement("button");boot.className="boot";boot.textContent="BOOT";boot.onclick=()=>bootMember(m);a.appendChild(boot);row.appendChild(a)}el.memberList.appendChild(row)}el.pendingList.replaceChildren();el.noticeList.replaceChildren();const p=state.member?.owner?state.pending.length:0,n=state.member?.owner?state.notices.length:0;el.pendingWrap.classList.toggle("hidden",p===0);el.noticeWrap.classList.toggle("hidden",n===0);const total=p+n;el.peopleBadge.textContent=String(total);el.peopleBadge.classList.toggle("hidden",total===0);el.alertBar.classList.toggle("hidden",p===0);if(p)el.alertText.textContent=p===1?`${state.pending[0].name} wants to join`:`${p} people want to join`;if(state.member?.owner){for(const r of state.pending){const row=document.createElement("div");row.className="request";const name=document.createElement("span");name.textContent=r.name;const a=document.createElement("div");a.className="actions";const no=document.createElement("button");no.className="deny";no.textContent="DENY";no.onclick=()=>decide(r.id,false);const yes=document.createElement("button");yes.className="approve";yes.textContent="APPROVE";yes.onclick=()=>decide(r.id,true);const saveBtn=document.createElement("button");saveBtn.className="approve";saveBtn.textContent="SAVE";saveBtn.onclick=()=>decide(r.id,true,true);a.append(no,yes,saveBtn);row.append(name,a);el.pendingList.appendChild(row)}for(const notice of state.notices){const row=document.createElement("div");row.className="notice";const t=document.createElement("span");t.textContent=notice.text;const clear=document.createElement("button");clear.className="clear-notice";clear.textContent="CLEAR";clear.onclick=()=>clearNotice(notice.id);row.append(t,clear);el.noticeList.appendChild(row)}}}
-async function decide(id,approve,save=false){try{await api(`/api/rooms/${state.room}/approve`,{method:"POST",body:JSON.stringify({token:state.token,requestId:id,approve,save})});state.pending=state.pending.filter(x=>x.id!==id);renderPeople();if(save)toast("Saved as trusted")}catch(e){toast(e.message)}}async function clearNotice(id){try{await api(`/api/rooms/${state.room}/notices/${encodeURIComponent(id)}?token=${encodeURIComponent(state.token)}`,{method:"DELETE"});state.notices=state.notices.filter(x=>x.id!==id);renderPeople()}catch(e){toast(e.message)}}async function bootMember(m){if(!confirm(`Boot ${m.name}?`))return;try{await api(`/api/rooms/${state.room}/boot`,{method:"POST",body:JSON.stringify({token:state.token,memberId:m.id})})}catch(e){toast(e.message)}}async function burnRoom(){
+async function decide(id,approve,save=false){try{await api(`/api/rooms/${state.room}/approve`,{method:"POST",body:JSON.stringify({token:state.token,requestId:id,approve,save})});state.pending=state.pending.filter(x=>x.id!==id);renderPeople();if(save)toast("Saved as trusted")}catch(e){toast(e.message)}}async function clearNotice(id){try{await api(`/api/rooms/${state.room}/notices/${encodeURIComponent(id)}`,{method:"DELETE",headers:{Authorization:`Bearer ${state.token}`}});state.notices=state.notices.filter(x=>x.id!==id);renderPeople()}catch(e){toast(e.message)}}async function bootMember(m){if(!confirm(`Boot ${m.name}?`))return;try{await api(`/api/rooms/${state.room}/boot`,{method:"POST",body:JSON.stringify({token:state.token,memberId:m.id})})}catch(e){toast(e.message)}}async function burnRoom(){
   try{
     await api(`/api/rooms/${state.room}/burn`,{
       method:"POST",

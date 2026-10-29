@@ -10,7 +10,21 @@ import * as gafPushFs from "node:fs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, "public");
 const PORT = Number(process.env.PORT || 8787);
-const TTL = Number(process.env.ROOM_TTL_MINUTES || 360) * 60000;
+function setting(name,fallback,min,max){
+  const n=Number(process.env[name]??fallback);
+  if(!Number.isFinite(n)||n<min||n>max)throw new Error(`Invalid ${name}`);
+  return n;
+}
+const BIND_HOST=process.env.BIND_HOST||"127.0.0.1";
+const TTL=setting("ROOM_TTL_MINUTES",360,0.001,1440)*60000;
+const ROOM_MAX_AGE=setting("ROOM_MAX_AGE_MINUTES",360,0.001,1440)*60000;
+const MAX_ROOMS=setting("MAX_ROOMS",16,1,128);
+const MAX_MEMBERS=setting("MAX_ROOM_MEMBERS",16,2,64);
+const MAX_CLIENTS=setting("MAX_CONNECTIONS",128,1,512);
+const MAX_UPLOADS=setting("MAX_CONCURRENT_UPLOADS",2,1,4);
+const GLOBAL_ATTACHMENT_BYTES=setting("TOTAL_ATTACHMENT_MAX_MB",256,1,1024)*1024*1024;
+const HISTORY_BYTES=1024*1024;
+let attachmentBytes=0,uploadReserved=0,activeUploads=0;
 const ORIGINS = new Set((process.env.ALLOWED_ORIGINS || "").split(",").map(s=>s.trim()).filter(Boolean));
 const HOST_PASSWORD = String(process.env.HOST_PASSWORD || "");
 const GAFBOX_URL = String(process.env.GAFBOX_URL || "").replace(/\/$/,"");
@@ -19,9 +33,18 @@ const HOST_AUTH_SECRET = String(process.env.HOST_AUTH_SECRET || "") ||
   (HOST_PASSWORD ? crypto.createHash("sha256").update(`gafchat-host:${HOST_PASSWORD}`).digest("hex") : "") ||
   (GAFBOX_SHARED_SECRET ? crypto.createHash("sha256").update(`gafchat-host:${GAFBOX_SHARED_SECRET}`).digest("hex") : "") ||
   crypto.randomBytes(32).toString("hex");
-const PUBLIC_ORIGIN = String(process.env.PUBLIC_ORIGIN || "https://example.com").replace(/\/$/,"");
+const PUBLIC_ORIGIN = String(process.env.PUBLIC_ORIGIN || `http://localhost:${PORT}`).replace(/\/$/,"");
+ORIGINS.add(new URL(PUBLIC_ORIGIN).origin);
+function allowedOrigin(req){return !req.headers.origin||ORIGINS.has(req.headers.origin)}
+function requestIp(req){
+  const peer=req.socket.remoteAddress||"unknown";
+  // Only a local reverse proxy may supply client-address headers.
+  const local=["127.0.0.1","::1","::ffff:127.0.0.1"].includes(peer);
+  return String(local?(req.headers["cf-connecting-ip"]||req.headers["x-forwarded-for"]?.split(",")[0]||peer):peer).trim().slice(0,80);
+}
+function bearer(req){return String(req.headers.authorization||"").replace(/^Bearer\s+/i,"")}
 const HOST_COOKIE = "gafchat_host";
-const HOST_MAX_AGE = 60 * 60 * 24 * 365 * 10;
+const HOST_MAX_AGE = setting("HOST_SESSION_DAYS",30,1,90)*86400;
 
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
@@ -83,7 +106,7 @@ async function sendHostPush(title,body,url="/host"){
       if(err?.statusCode===404 || err?.statusCode===410){
         dead.push(sub.endpoint);
       }else{
-        console.warn("GafChat push failed:",err?.message||err);
+        console.warn("GafChat push failed",Number(err?.statusCode)||"network");
       }
     }
   }
@@ -100,11 +123,11 @@ async function sendHostPush(title,body,url="/host"){
 
 
 const TRUST_COOKIE = "gafchat_trusted";
-const TRUST_MAX_AGE = 60 * 60 * 24 * 365;
+const TRUST_MAX_AGE = setting("TRUSTED_DEVICE_DAYS",90,1,365)*86400;
 const TRUST_DB = String(process.env.TRUST_DB || path.join(__dirname, "trusted-devices.json"));
 
-const ATTACHMENT_MAX_BYTES = Number(process.env.ATTACHMENT_MAX_MB || 100) * 1024 * 1024;
-const ROOM_ATTACHMENT_MAX_BYTES = Number(process.env.ROOM_ATTACHMENT_MAX_MB || 100) * 1024 * 1024;
+const ATTACHMENT_MAX_BYTES = setting("ATTACHMENT_MAX_MB",100,1,100)*1024*1024;
+const ROOM_ATTACHMENT_MAX_BYTES = setting("ROOM_ATTACHMENT_MAX_MB",100,1,100)*1024*1024;
 
 const rooms = new Map();
 const buckets = new Map();
@@ -129,6 +152,7 @@ function saveTrustDb(){
   const tmp=`${TRUST_DB}.tmp`;
   fs.writeFileSync(tmp,JSON.stringify(trustDb,null,2)+"\n",{mode:0o600});
   fs.renameSync(tmp,TRUST_DB);
+  fs.chmodSync(TRUST_DB,0o600);
 }
 
 function pruneTrustDb(){
@@ -162,21 +186,26 @@ function cleanName(v) {
 function headers() {
   return {
     "X-Content-Type-Options":"nosniff",
+    "X-Frame-Options":"DENY",
+    "Cross-Origin-Resource-Policy":"same-origin",
+    "X-Robots-Tag":"noindex, nofollow, noarchive",
     "Referrer-Policy":"no-referrer",
     "Permissions-Policy":"camera=(), microphone=(), geolocation=()",
     "Cross-Origin-Opener-Policy":"same-origin",
     "Content-Security-Policy":[
-      "default-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com",
+      "default-src 'none'",
       "script-src 'self'",
-      "style-src 'self' https://fonts.googleapis.com",
-      "font-src 'self' https://fonts.gstatic.com",
-      "connect-src 'self' ws: wss:",
-      "img-src 'self' data: blob: https:",
+      "style-src 'self'",
+      "font-src 'self'",
+      `connect-src 'self' ${[...ORIGINS].map(o=>new URL(o).origin.replace(/^http/,"ws")).join(" ")}`,
+      "img-src 'self' data: blob:",
       "media-src 'self' blob:",
       "worker-src 'self' blob:",
       "object-src 'none'",
       "base-uri 'none'",
-      "frame-ancestors 'none'"
+      "frame-ancestors 'none'",
+      "form-action 'self'",
+      "manifest-src 'self'"
     ].join("; ")
   };
 }
@@ -187,14 +216,18 @@ function json(res,status,obj,extra={}) {
   res.end(body);
 }
 
-function send(ws,obj) { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); }
+function send(ws,obj) {
+  if(ws?.readyState!==WebSocket.OPEN)return;
+  if(ws.bufferedAmount>2*1024*1024){ws.terminate();return}
+  ws.send(JSON.stringify(obj),err=>{if(err)ws.terminate()});
+}
 function broadcast(room,obj) { for (const ws of room.clients) send(ws,obj); }
 
 function parseCookies(req){
   const out={};
   for(const chunk of String(req.headers.cookie||"").split(";")){
     const i=chunk.indexOf("="); if(i<0) continue;
-    out[chunk.slice(0,i).trim()]=decodeURIComponent(chunk.slice(i+1).trim());
+    try{out[chunk.slice(0,i).trim()]=decodeURIComponent(chunk.slice(i+1).trim())}catch{}
   }
   return out;
 }
@@ -213,7 +246,8 @@ function readHostToken(token){
     const a=Buffer.from(sig),b=Buffer.from(expected);
     if(a.length!==b.length||!crypto.timingSafeEqual(a,b))return null;
     const data=JSON.parse(Buffer.from(body,"base64url").toString("utf8"));
-    if(data.exp<Math.floor(Date.now()/1000))return null;
+    const t=Math.floor(Date.now()/1000);
+    if(!Number.isFinite(data.exp)||!Number.isFinite(data.iat)||data.exp<=t||data.iat>t+60||data.iat+HOST_MAX_AGE<=t)return null;
     return data;
   }catch{return null}
 }
@@ -230,7 +264,7 @@ function trustedDevice(req){
   const raw=parseCookies(req)[TRUST_COOKIE]||"";
   if(!raw)return null;
   const hash=sha(raw);
-  return trustDb.devices.find(x=>x.tokenHash===hash)||null;
+  return trustDb.devices.find(x=>x.tokenHash===hash&&Number(x.createdAt)>Date.now()-TRUST_MAX_AGE*1000)||null;
 }
 
 function canCreateRoom(req){
@@ -241,25 +275,32 @@ function onlineMembers(room){
   return [...room.online].map(id=>room.members.get(id)).filter(Boolean).map(({id,name,owner})=>({id,name,owner}));
 }
 
+function activeRoom(code){
+  const room=rooms.get(String(code||"").toUpperCase());
+  if(room&&now()-room.createdAt>=ROOM_MAX_AGE){destroyRoom(room);return null}
+  return room;
+}
 function auth(roomCode, token) {
-  const room = rooms.get(String(roomCode||"").toUpperCase());
+  const room = activeRoom(roomCode);
   if (!room) return null;
   for (const member of room.members.values()) if (tokenMatches(member.tokenHash, token)) return {room,member};
   return null;
 }
 
-function rate(ip) {
-  if(process.env.DISABLE_RATE_LIMIT==="1") return true;
+function rate(ip,limit=180,window=60000) {
   const t = now(); let b = buckets.get(ip);
-  if (!b || t-b.start > 60000) b = {start:t,count:0};
-  b.count++; buckets.set(ip,b); return b.count <= 100;
+  if(!b||t-b.start>window){
+    if(!b&&buckets.size>=10000)return false;
+    b={start:t,count:0,window};
+  }
+  b.count++;buckets.set(ip,b);return b.count<=limit;
 }
 
 async function readJson(req,max=16384) {
   return new Promise((resolve,reject)=>{
     let size=0,chunks=[],done=false;
     req.on("data",c=>{if(done)return;size+=c.length;if(size>max){done=true;reject(Object.assign(new Error("Request too large"),{status:413}));req.resume();return;}chunks.push(c)});
-    req.on("end",()=>{if(done)return;try{resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")||"{}"))}catch{reject(Object.assign(new Error("Bad JSON"),{status:400}))}});
+    req.on("end",()=>{if(done)return;try{const value=JSON.parse(Buffer.concat(chunks).toString("utf8")||"{}");if(!value||typeof value!=="object"||Array.isArray(value))throw new Error("Expected an object");resolve(value)}catch{reject(Object.assign(new Error("Bad JSON"),{status:400}))}});
     req.on("error",reject);
   });
 }
@@ -284,17 +325,23 @@ function mime(file){return {
   ".webp":"image/webp",
   ".svg":"image/svg+xml",
   ".ico":"image/x-icon",
-  ".json":"application/json; charset=utf-8"
+  ".json":"application/json; charset=utf-8",
+  ".woff2":"font/woff2"
 }[path.extname(file).toLowerCase()]||"application/octet-stream"}
 
 function addNotice(room,text,kind="notice"){
-  const n={id:rid(8),text,kind,at:now()}; room.notices.set(n.id,n);
+  const n={id:rid(8),text,kind,at:now()}; room.notices.set(n.id,n);if(room.notices.size>50)room.notices.delete(room.notices.keys().next().value);
   for(const ws of room.clients) if(ws.memberId===room.ownerId) send(ws,{type:"notice",notice:n});
 }
 
 function wipeRoom(room) {
   room.history.length = 0;
+  attachmentBytes=Math.max(0,attachmentBytes-(room.attachmentBytes||0));
+  for(const a of room.attachments?.values()||[])a.blob.fill(0);
   room.attachments?.clear();
+  for(const timer of room.disconnectTimers?.values()||[])clearTimeout(timer);
+  room.disconnectTimers?.clear();
+  room.members.clear();room.online.clear();room.clients.clear();
   room.attachmentBytes = 0;
   room.notices.clear();
   room.pending.clear();
@@ -308,11 +355,18 @@ function destroyRoom(room) {
   rooms.delete(room.code);
 }
 
+function recordHistory(room,envelope){
+  room.history.push(envelope);
+  let bytes=room.history.reduce((n,x)=>n+Buffer.byteLength(JSON.stringify(x)),0);
+  while(room.history.length>250||bytes>HISTORY_BYTES){bytes-=Buffer.byteLength(JSON.stringify(room.history.shift()))}
+}
+
 async function postGafBox(pathname,payload){
   if(!GAFBOX_URL || !GAFBOX_SHARED_SECRET) return {delivered:false,reason:"not_configured"};
   try{
     const r=await fetch(`${GAFBOX_URL}${pathname}`,{
       method:"POST",
+      signal:AbortSignal.timeout(10000),
       headers:{"Content-Type":"application/json","Authorization":`Bearer ${GAFBOX_SHARED_SECRET}`},
       body:JSON.stringify(payload)
     });
@@ -332,13 +386,21 @@ function hostDeviceLabel(req){
 
 
 const server = http.createServer(async (req,res)=>{
-  const ip = req.headers["cf-connecting-ip"] || req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress || "unknown";
+  const ip=requestIp(req);
   if (!rate(ip)) return json(res,429,{ok:false,error:"Too many requests."});
 
   try {
-    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    const url = new URL(req.url, PUBLIC_ORIGIN);
+    if(!allowedOrigin(req)||req.headers["sec-fetch-site"]==="cross-site")return json(res,403,{ok:false,error:"Origin denied."});
+    if(["POST","PUT","PATCH","DELETE"].includes(req.method)&&url.pathname.startsWith("/api/")){
+      const upload=/^\/api\/rooms\/[A-Z0-9]{6}\/attachments$/i.test(url.pathname)&&req.method==="POST";
+      const type=String(req.headers["content-type"]||"").split(";")[0].trim();
+      if(req.method!=="DELETE"&&type!==(upload?"application/octet-stream":"application/json"))return json(res,415,{ok:false,error:"Unsupported content type."});
+    }
+    const sensitive=["/api/host/login","/api/host/approval/start","/api/room-request","/api/trust/enroll"].includes(url.pathname)&&req.method==="POST";
+    if(sensitive&&!rate(`sensitive:${ip}`,10,600000))return json(res,429,{ok:false,error:"Please wait before trying again."});
 
-    if(req.method==="GET" && url.pathname==="/api/health") return json(res,200,{ok:true,version:"0.5.2",rooms:rooms.size});
+    if(req.method==="GET" && url.pathname==="/api/health") return json(res,200,{ok:true,version:"0.5.3",rooms:rooms.size});
 
     if(req.method==="GET" && url.pathname==="/api/host/status"){
       const host=isHost(req);
@@ -391,7 +453,8 @@ const server = http.createServer(async (req,res)=>{
       if(
         !sub ||
         typeof sub.endpoint!=="string" ||
-        !sub.endpoint.startsWith("https://") ||
+        !/^https:\/\/([a-z0-9-]+\.)*(?:push\.services\.mozilla\.com|fcm\.googleapis\.com|push\.apple\.com|notify\.windows\.com)\//i.test(sub.endpoint) ||
+        sub.endpoint.length>2048 ||
         !sub.keys?.p256dh ||
         !sub.keys?.auth
       ){
@@ -402,6 +465,7 @@ const server = http.createServer(async (req,res)=>{
         x=>x.endpoint!==sub.endpoint
       );
 
+      if(hostPushSubscriptions.length>=16)return json(res,429,{ok:false,error:"Too many push subscriptions."});
       hostPushSubscriptions.push(sub);
       saveHostPushSubscriptions();
 
@@ -427,6 +491,7 @@ const server = http.createServer(async (req,res)=>{
       if(!GAFBOX_URL || !GAFBOX_SHARED_SECRET) return json(res,503,{ok:false,error:"GafBox approval is not configured yet."});
       const id=rid(12),claim=rid(),callbackToken=rid();
       const entry={id,claimHash:sha(claim),callbackHash:sha(callbackToken),status:"pending",createdAt:now(),expiresAt:now()+10*60000,device:hostDeviceLabel(req)};
+      if(hostApprovals.size>=50)return json(res,429,{ok:false,error:"Too many approvals."});
       hostApprovals.set(id,entry);
       const base=PUBLIC_ORIGIN;
       const approveUrl=`${base}/api/host/approval/decision?id=${encodeURIComponent(id)}&token=${encodeURIComponent(callbackToken)}&decision=approve`;
@@ -441,6 +506,7 @@ const server = http.createServer(async (req,res)=>{
       const a=hostApprovals.get(id);
       if(!a || a.expiresAt<now()) return json(res,410,{ok:false,error:"Approval expired."});
       if(!tokenMatches(a.callbackHash,token)) return json(res,403,{ok:false,error:"Invalid approval."});
+      if(a.status!=="pending")return json(res,409,{ok:false,error:"Already decided."});
       a.status=decision; a.decidedAt=now();
       return json(res,200,{ok:true,status:decision});
     }
@@ -468,10 +534,22 @@ const server = http.createServer(async (req,res)=>{
 
     if(req.method==="POST" && url.pathname==="/api/host/logout") return json(res,200,{ok:true},{"Set-Cookie":clearHostCookie()});
 
+    if(req.method==="GET" && url.pathname==="/api/trust/devices"){
+      if(!isHost(req))return json(res,403,{ok:false,error:"Host only."});
+      return json(res,200,{ok:true,devices:trustDb.devices.filter(x=>x.createdAt>now()-TRUST_MAX_AGE*1000).map(({id,label,createdAt})=>({id,label,createdAt}))});
+    }
+    if(req.method==="POST" && url.pathname==="/api/trust/revoke"){
+      if(!isHost(req))return json(res,403,{ok:false,error:"Host only."});
+      const body=await readJson(req);const old=trustDb.devices.length;
+      trustDb.devices=trustDb.devices.filter(x=>x.id!==String(body.id||""));
+      if(trustDb.devices.length===old)return json(res,404,{ok:false,error:"Device not found."});
+      saveTrustDb();return json(res,200,{ok:true});
+    }
     if(req.method==="POST" && url.pathname==="/api/trust/invite"){
       if(!isHost(req)) return json(res,403,{ok:false,error:"Host only."});
 
       const body=await readJson(req);
+      if(trustDb.invites.length>=100)return json(res,429,{ok:false,error:"Too many invites."});
       const label=String(body.label||"Trusted person").trim().slice(0,80)||"Trusted person";
       const token=rid(32);
 
@@ -480,7 +558,7 @@ const server = http.createServer(async (req,res)=>{
         tokenHash:sha(token),
         label,
         createdAt:now(),
-        expiresAt:now()+7*24*60*60*1000
+        expiresAt:now()+24*60*60*1000
       });
       saveTrustDb();
 
@@ -501,6 +579,7 @@ const server = http.createServer(async (req,res)=>{
       trustDb.invites.splice(i,1);
 
       const deviceToken=rid(32);
+      if(trustDb.devices.length>=100)return json(res,429,{ok:false,error:"Too many trusted devices."});
       trustDb.devices.push({
         id:rid(10),
         tokenHash:sha(deviceToken),
@@ -550,7 +629,7 @@ const server = http.createServer(async (req,res)=>{
 
       const directPush=await sendHostPush(
         "GafChat",
-        `${name} wants to chat`,
+        "Someone wants to chat",
         "/host"
       );
 
@@ -582,6 +661,7 @@ const server = http.createServer(async (req,res)=>{
 
       if(r.status==="approved"){
         const result=r.guestResult;
+        delete r.guestResult;
         r.status="consumed";
         return json(res,200,{ok:true,status:"approved",...result});
       }
@@ -596,7 +676,7 @@ const server = http.createServer(async (req,res)=>{
         return json(res,403,{ok:false,error:"Host only."});
 
       const r=roomRequests.find(x=>x.id===inbound[1] && x.status==="pending");
-      if(!r)
+      if(!r||r.expiresAt<now())
         return json(res,404,{ok:false,error:"Request not found."});
 
       const body=await readJson(req);
@@ -610,6 +690,7 @@ const server = http.createServer(async (req,res)=>{
       if(!hostPub || hostPub.kty!=="EC" || hostPub.crv!=="P-256" || !hostPub.x || !hostPub.y)
         return json(res,400,{ok:false,error:"Secure host key missing."});
 
+      if(rooms.size>=MAX_ROOMS)return json(res,429,{ok:false,error:"Room limit reached."});
       let roomCode;
       do roomCode=code(); while(rooms.has(roomCode));
 
@@ -687,6 +768,7 @@ const server = http.createServer(async (req,res)=>{
     if(req.method==="POST" && url.pathname==="/api/rooms"){
       if(!canCreateRoom(req)) return json(res,403,{ok:false,error:"Trusted device only."});
       const body = await readJson(req); const name = cleanName(body.name)||"Gaf";
+      if(rooms.size>=MAX_ROOMS)return json(res,429,{ok:false,error:"Room limit reached."});
       let roomCode; do roomCode = code(); while(rooms.has(roomCode));
       const ownerToken = rid(), ownerId = rid(10), inviteToken = rid(32);
       const room = {code:roomCode,inviteHash:sha(inviteToken),createdAt:now(),touchedAt:now(),ownerId,members:new Map(),pending:new Map(),approvals:new Map(),clients:new Set(),online:new Set(),disconnectTimers:new Map(),history:[],notices:new Map(),attachments:new Map(),attachmentBytes:0};
@@ -696,7 +778,7 @@ const server = http.createServer(async (req,res)=>{
 
     let m = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]{6})\/status$/i);
     if(req.method==="GET" && m){
-      const token=url.searchParams.get("token")||"";
+      const token=bearer(req);
       const a=auth(m[1],token);
       if(!a)return json(res,404,{ok:false,error:"Room gone."});
       return json(res,200,{ok:true,room:a.room.code});
@@ -704,13 +786,14 @@ const server = http.createServer(async (req,res)=>{
 
     m = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]{6})\/join$/i);
     if(req.method==="POST" && m){
-      const room = rooms.get(m[1].toUpperCase()); if(!room) return json(res,404,{ok:false,error:"Room not found."});
+      const room = activeRoom(m[1]); if(!room) return json(res,404,{ok:false,error:"Room not found."});
       const body = await readJson(req), name = cleanName(body.name);
       if(!name) return json(res,400,{ok:false,error:"Enter your name."});
 
       const trusted=trustedDevice(req);
       const invited=Boolean(body.inviteToken && tokenMatches(room.inviteHash,body.inviteToken));
 
+      if(room.members.size>=MAX_MEMBERS)return json(res,429,{ok:false,error:"Room is full."});
       if(trusted || invited){
         const token=rid(),member={id:rid(10),name,owner:false};
         room.members.set(member.id,{...member,tokenHash:sha(token)});
@@ -719,8 +802,9 @@ const server = http.createServer(async (req,res)=>{
         return json(res,200,{ok:true,status:"approved",token,member,trusted:Boolean(trusted),invited});
       }
 
+      if(room.pending.size+room.approvals.size>=20)return json(res,429,{ok:false,error:"Too many requests."});
       const requestId=rid(12), claim=rid();
-      room.pending.set(requestId,{id:requestId,name,claimHash:sha(claim)});
+      room.pending.set(requestId,{id:requestId,name,claimHash:sha(claim),expiresAt:now()+600000});
       room.touchedAt=now();
 
       for(const ws of room.clients)
@@ -732,7 +816,7 @@ const server = http.createServer(async (req,res)=>{
 
     m = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]{6})\/requests\/([^/]+)$/i);
     if(req.method==="GET" && m){
-      const room=rooms.get(m[1].toUpperCase()); if(!room)return json(res,404,{ok:false,error:"Room not found."});
+      const room=activeRoom(m[1]); if(!room)return json(res,404,{ok:false,error:"Room not found."});
       const requestId=m[2],claim=url.searchParams.get("claim")||"",pending=room.pending.get(requestId);
       if(pending){if(!tokenMatches(pending.claimHash,claim))return json(res,403,{ok:false,error:"Invalid request."});return json(res,200,{ok:true,status:"pending"})}
       const approval=room.approvals.get(requestId);
@@ -743,8 +827,9 @@ const server = http.createServer(async (req,res)=>{
     m = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]{6})\/approve$/i);
     if(req.method==="POST" && m){
       const body=await readJson(req),a=auth(m[1],body.token); if(!a?.member.owner)return json(res,403,{ok:false,error:"Owner only."});
+      if(a.room.members.size>=MAX_MEMBERS&&body.approve!==false)return json(res,429,{ok:false,error:"Room is full."});
       const p=a.room.pending.get(body.requestId); if(!p)return json(res,404,{ok:false,error:"Request not found."}); a.room.pending.delete(p.id);
-      if(body.approve===false){a.room.approvals.set(p.id,{status:"denied",claimHash:p.claimHash});return json(res,200,{ok:true,status:"denied"})}
+      if(body.approve===false){a.room.approvals.set(p.id,{status:"denied",claimHash:p.claimHash,expiresAt:now()+600000});return json(res,200,{ok:true,status:"denied"})}
 
       let trustToken="";
       if(body.save===true){
@@ -764,6 +849,7 @@ const server = http.createServer(async (req,res)=>{
       a.room.approvals.set(p.id,{
         status:"approved",
         claimHash:p.claimHash,
+        expiresAt:now()+600000,
         token,
         member,
         ...(trustToken?{trustToken}:{})
@@ -784,7 +870,7 @@ const server = http.createServer(async (req,res)=>{
 
     m = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]{6})\/notices\/([^/]+)$/i);
     if(req.method==="DELETE" && m){
-      const token=url.searchParams.get("token")||"",a=auth(m[1],token); if(!a?.member.owner)return json(res,403,{ok:false,error:"Owner only."});
+      const token=bearer(req),a=auth(m[1],token); if(!a?.member.owner)return json(res,403,{ok:false,error:"Owner only."});
       a.room.notices.delete(m[2]); return json(res,200,{ok:true});
     }
 
@@ -792,12 +878,20 @@ const server = http.createServer(async (req,res)=>{
     if(req.method==="POST" && m){
       const token=String(req.headers.authorization||"").replace(/^Bearer\s+/i,"");
       const a=auth(m[1],token); if(!a)return json(res,403,{ok:false,error:"Room access required."});
-      if((a.room.attachmentBytes||0)>=ROOM_ATTACHMENT_MAX_BYTES)return json(res,413,{ok:false,error:"Room file cache is full."});
-      const max=Math.min(ATTACHMENT_MAX_BYTES,ROOM_ATTACHMENT_MAX_BYTES-(a.room.attachmentBytes||0));
-      const blob=await readBuffer(req,max); if(!blob.length)return json(res,400,{ok:false,error:"Empty file."});
-      const id=rid(12); a.room.attachments.set(id,{id,memberId:a.member.id,blob,bytes:blob.length,createdAt:now()});
-      a.room.attachmentBytes=(a.room.attachmentBytes||0)+blob.length; a.room.touchedAt=now();
-      return json(res,201,{ok:true,id,bytes:blob.length});
+      if(activeUploads>=MAX_UPLOADS||a.room.uploading)return json(res,429,{ok:false,error:"Another upload is in progress."});
+      const max=Math.min(ATTACHMENT_MAX_BYTES,ROOM_ATTACHMENT_MAX_BYTES-(a.room.attachmentBytes||0),GLOBAL_ATTACHMENT_BYTES-attachmentBytes-uploadReserved);
+      if(max<=0)return json(res,413,{ok:false,error:"File cache is full."});
+      const declared=Number(req.headers["content-length"]);
+      if(Number.isFinite(declared)&&declared>max)return json(res,413,{ok:false,error:"File is too large for available space."});
+      activeUploads++;uploadReserved+=max;a.room.uploading=true;
+      try{
+        const blob=await readBuffer(req,max);
+        if(!blob.length)return json(res,400,{ok:false,error:"Empty file."});
+        if(auth(m[1],token)?.room!==a.room){blob.fill(0);return json(res,410,{ok:false,error:"Room gone."})}
+        const id=rid(12);a.room.attachments.set(id,{id,memberId:a.member.id,blob,bytes:blob.length,createdAt:now()});
+        a.room.attachmentBytes+=blob.length;attachmentBytes+=blob.length;a.room.touchedAt=now();
+        return json(res,201,{ok:true,id,bytes:blob.length});
+      }finally{activeUploads--;uploadReserved-=max;a.room.uploading=false}
     }
 
     m = url.pathname.match(/^\/api\/rooms\/([A-Z0-9]{6})\/attachments\/([^/]+)$/i);
@@ -820,26 +914,34 @@ const server = http.createServer(async (req,res)=>{
       let file = (url.pathname==="/"||url.pathname==="/host"||inviteRoute)
         ? path.join(PUBLIC,"index.html")
         : path.normalize(path.join(PUBLIC,decodeURIComponent(url.pathname)));
-      if(!file.startsWith(PUBLIC)) return json(res,400,{ok:false,error:"Bad path."});
-      fs.stat(file,(err,st)=>{if(err||!st.isFile()){res.writeHead(404,headers());res.end("Not found");return}res.writeHead(200,{...headers(),"Content-Type":mime(file),"Cache-Control":"no-store"});fs.createReadStream(file).pipe(res)}); return;
+      if(!file.startsWith(PUBLIC+path.sep)) return json(res,400,{ok:false,error:"Bad path."});
+      const rel=path.relative(PUBLIC,file).replaceAll(path.sep,"/");
+      const assets=new Set(["index.html","app.js","styles.css","manifest.json","sw.js","gafchat-logo.png","gafchat-social-v2.png","icons/icon-192.png","icons/icon-512.png","icons/icon-maskable-512.png","icons/apple-touch-icon.png","fonts/titillium-web-latin-300-normal.woff2","fonts/titillium-web-latin-400-normal.woff2","fonts/titillium-web-latin-600-normal.woff2","fonts/titillium-web-latin-700-normal.woff2"]);
+      if(!assets.has(rel)||!fs.existsSync(file)||!fs.realpathSync(file).startsWith(PUBLIC+path.sep))return json(res,404,{ok:false,error:"Not found."});
+      fs.stat(file,(err,st)=>{if(err||!st.isFile()){res.writeHead(404,headers());res.end("Not found");return}res.writeHead(200,{...headers(),"Content-Type":mime(file),"Cache-Control":"no-store"});fs.createReadStream(file).on("error",()=>res.destroy()).pipe(res)}); return;
     }
 
     json(res,404,{ok:false,error:"Not found."});
-  } catch(err){console.error(err);if(!res.headersSent)json(res,err.status||500,{ok:false,error:err.status?err.message:"Server error."})}
+  } catch(err){console.error("GafChat request failed",err.status||500);if(!res.headersSent)json(res,err.status||500,{ok:false,error:err.status?err.message:"Server error."})}
 });
 
-const wss = new WebSocketServer({noServer:true,maxPayload:65536,perMessageDeflate:false});
+server.requestTimeout=120000;server.headersTimeout=15000;server.keepAliveTimeout=5000;
+server.maxHeadersCount=64;server.maxConnections=MAX_CLIENTS+32;
+const wss = new WebSocketServer({noServer:true,maxPayload:65536,perMessageDeflate:false,handleProtocols:protocols=>protocols.has("gafchat")?"gafchat":false});
 server.on("upgrade",(req,socket,head)=>{
   try{
-    const origin=req.headers.origin||""; if(ORIGINS.size&&!ORIGINS.has(origin)){socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");socket.destroy();return}
+    const origin=req.headers.origin||""; if(!ORIGINS.has(origin)||wss.clients.size>=MAX_CLIENTS||!rate(`ws:${requestIp(req)}`,60)){socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");socket.destroy();return}
     const url=new URL(req.url,`http://${req.headers.host||"localhost"}`); if(url.pathname!=="/ws"){socket.destroy();return}
-    const a=auth(url.searchParams.get("room"),url.searchParams.get("token")); if(!a){socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");socket.destroy();return}
+    const protocols=String(req.headers["sec-websocket-protocol"]||"").split(",").map(s=>s.trim());
+    const token=protocols.find(p=>p.startsWith("auth."))?.slice(5)||"";
+    const a=auth(url.searchParams.get("room"),token); if(!a){socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");socket.destroy();return}
+    if([...a.room.clients].filter(c=>c.memberId===a.member.id).length>=4){socket.destroy();return}
     wss.handleUpgrade(req,socket,head,ws=>{ws.roomCode=a.room.code;ws.memberId=a.member.id;wss.emit("connection",ws)});
   }catch{socket.destroy()}
 });
 
 wss.on("connection",ws=>{
-  const room=rooms.get(ws.roomCode); if(!room)return ws.close(1008,"Expired");
+  const room=activeRoom(ws.roomCode); if(!room)return ws.close(1008,"Expired");
   room.clients.add(ws); room.touchedAt=now();
   const wasOnline=room.online.has(ws.memberId); room.online.add(ws.memberId);
   const timer=room.disconnectTimers.get(ws.memberId); if(timer){clearTimeout(timer);room.disconnectTimers.delete(ws.memberId)}
@@ -848,8 +950,12 @@ wss.on("connection",ws=>{
   broadcast(room,{type:"presence",members:onlineMembers(room)});
   if(!wasOnline){const m=room.members.get(ws.memberId);if(m&&!m.owner) addNotice(room,`${m.name} joined`,"joined")}
 
+  let messageWindow=now(),messageCount=0;
   ws.on("message",raw=>{
-    let msg;try{msg=JSON.parse(raw.toString("utf8"))}catch{return}
+    if(activeRoom(ws.roomCode)!==room||!room.members.has(ws.memberId))return ws.close(4004,"Room gone");
+    if(now()-messageWindow>=10000){messageWindow=now();messageCount=0}
+    if(++messageCount>80)return ws.close(1008,"Rate limit");
+    let msg;try{msg=JSON.parse(raw.toString("utf8"));if(!msg||typeof msg!=="object"||Array.isArray(msg))return}catch{return}
     if(msg.type==="leave"){ws.intentionalLeave=true;try{ws.close(1000,"Left")}catch{};return}
     const member=room.members.get(ws.memberId); if(!member)return;
     if(msg.type==="typing"){
@@ -881,8 +987,7 @@ wss.on("connection",ws=>{
         iv
       };
 
-      room.history.push(envelope);
-      if(room.history.length>250)room.history.shift();
+      recordHistory(room,envelope);
 
       broadcast(room,envelope);
       room.touchedAt=now();
@@ -891,17 +996,18 @@ wss.on("connection",ws=>{
 
     if(msg.type==="message"){
       const ciphertext=String(msg.ciphertext||""),iv=String(msg.iv||""); if(!ciphertext||!iv||ciphertext.length>50000||iv.length>64)return;
-      const envelope={type:"message",id:rid(10),sender:{id:member.id,name:member.name},sentAt:now(),ciphertext,iv}; room.history.push(envelope); if(room.history.length>250)room.history.shift(); broadcast(room,envelope); room.touchedAt=now(); return;
+      const envelope={type:"message",id:rid(10),sender:{id:member.id,name:member.name},sentAt:now(),ciphertext,iv}; recordHistory(room,envelope); broadcast(room,envelope); room.touchedAt=now(); return;
     }
     if(msg.type==="attachment"){
       const att=msg.attachment||{},id=String(att.id||""),iv=String(att.iv||""),metaIv=String(att.metaIv||""),metaCiphertext=String(att.metaCiphertext||"");
       const cached=room.attachments.get(id); if(!cached||cached.memberId!==member.id||!iv||!metaIv||!metaCiphertext||iv.length>64||metaIv.length>64||metaCiphertext.length>12000)return;
       const envelope={type:"attachment",id:rid(10),sender:{id:member.id,name:member.name},sentAt:now(),attachment:{id,iv,metaIv,metaCiphertext,bytes:cached.bytes}};
-      room.history.push(envelope); if(room.history.length>250)room.history.shift(); broadcast(room,envelope); room.touchedAt=now(); return;
+      recordHistory(room,envelope); broadcast(room,envelope); room.touchedAt=now(); return;
     }
   });
 
   const gone=()=>{
+    if(rooms.get(room.code)!==room)return;
     room.clients.delete(ws);
     if([...room.clients].some(c=>c.memberId===ws.memberId))return;
     const old=room.disconnectTimers.get(ws.memberId); if(old)clearTimeout(old);
@@ -916,5 +1022,14 @@ wss.on("connection",ws=>{
   ws.on("close",gone); ws.on("error",gone);
 });
 
-setInterval(()=>{const cutoff=now()-TTL;for(const [c,r] of rooms)if(r.clients.size===0&&r.touchedAt<cutoff){wipeRoom(r);rooms.delete(c)}for(const [id,a] of hostApprovals)if(a.expiresAt<now())hostApprovals.delete(id)},60000).unref();
-server.listen(PORT,()=>console.log(`GafChat v0.5.2 listening on http://localhost:${PORT}`));
+setInterval(()=>{
+  const t=now();
+  for(const room of rooms.values()){
+    if(t-room.createdAt>=ROOM_MAX_AGE||(!room.clients.size&&t-room.touchedAt>=TTL)){destroyRoom(room);continue}
+    for(const map of [room.pending,room.approvals])for(const [id,x] of map)if(x.expiresAt<t)map.delete(id);
+  }
+  for(const [id,a] of hostApprovals)if(a.expiresAt<t)hostApprovals.delete(id);
+  for(let i=roomRequests.length-1;i>=0;i--)if(roomRequests[i].expiresAt<t||roomRequests[i].status==="consumed")roomRequests.splice(i,1);
+  for(const [key,b] of buckets)if(t-b.start>b.window)buckets.delete(key);
+},1000).unref();
+server.listen(PORT,BIND_HOST,()=>console.log(`GafChat v0.5.3 listening on http://${BIND_HOST}:${server.address().port}`));

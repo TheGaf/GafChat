@@ -1,6 +1,6 @@
 {
   "name": "gafchat",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,6 +12,6 @@
     "ws": "^8.18.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   }
 }
