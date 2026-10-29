@@ -4,6 +4,8 @@ Private, temporary, self-hosted encrypted chat.
 
 Current snapshot: **v0.5.4**, synced with the running installation on October 29, 2026.
 
+Confirmed working on the live installation. The `stable/v0.5.4` branch preserves this build; see [release notes](RELEASE_NOTES.md).
+
 ## What it does
 
 - Invite-only rooms with short room codes and shareable `/r/CODE` links.
